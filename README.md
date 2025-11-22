@@ -1,10 +1,24 @@
-# NightShift - Automated Research Assistant System
+<div align="center">
 
-![NightShift Logo](assets/logo.png)
+<img src="assets/logo.png" alt="NightShift Logo" width="200"/>
 
-An AI-driven agent manager for scientific research automation, powered by Claude Code's headless mode and MCP tools.
+# NightShift
 
-## Status: ✅ MVP Complete
+**Automated Research Assistant System**
+
+[![Status](https://img.shields.io/badge/status-MVP%20Complete-success)](https://github.com)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+*An AI-driven agent manager for scientific research automation, powered by Claude Code's headless mode and MCP tools.*
+
+[Features](#features) • [Installation](#installation) • [Usage](#usage) • [Examples](#example-workflows)
+
+</div>
+
+---
+
+## Overview
 
 NightShift is a working prototype that automates research tasks using Claude Code in headless mode. The system uses a "task planner" agent to analyze requests, select appropriate tools, and execute tasks through a staged approval workflow.
 
