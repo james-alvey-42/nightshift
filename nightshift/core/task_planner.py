@@ -135,10 +135,10 @@ Guidelines:
             wrapper = json.loads(result.stdout)
 
             # Extract the actual result from the wrapper
-            # When using --json-schema, the response is in "structured_output"
+            # Check for structured_output first (new --json-schema format)
             if "structured_output" in wrapper:
                 plan = wrapper["structured_output"]
-            elif "result" in wrapper:
+            elif "result" in wrapper and wrapper["result"]:
                 result_text = wrapper["result"]
 
                 # Remove markdown code fences if present

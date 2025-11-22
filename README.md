@@ -138,7 +138,9 @@ nightshift clear
 nightshift clear --confirm
 ```
 
-## Example Workflow
+## Example Workflows
+
+### Research Paper Analysis
 
 ```bash
 $ nightshift submit "Download arxiv paper 2510.13997 and summarize using Gemini"
@@ -179,6 +181,58 @@ Execution time: 122.9s
 - ✨ arxiv_2510.13997_summary.md
 
 **Results:** output/task_3acf60c6_output.json
+════════════════════════════════════════════════════════════════════════════
+```
+
+### Code Repository Management
+
+```bash
+$ nightshift submit "Download the mcp-handley-lab repository from the handley-lab GitHub organization and create a pull request addressing issue #50"
+
+Planning task...
+✓ Task created: task_7d2a1f9b
+
+╭─────────────────────────────── Task Plan ───────────────────────────────╮
+│ Tools needed: Bash, Read, Write, Edit, Glob, Grep                       │
+│ Estimated: ~2000 tokens, ~120s                                          │
+│ Reasoning: Clone repo, analyze issue, implement fix, create PR          │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+⏸  Status: STAGED (waiting for approval)
+Run 'nightshift approve task_7d2a1f9b' to execute
+
+$ nightshift approve task_7d2a1f9b
+
+✓ Task approved: task_7d2a1f9b
+▶ Executing...
+
+[... cloning repository ...]
+[... analyzing issue #50 ...]
+[... implementing fix ...]
+[... creating pull request ...]
+
+✓ Task completed successfully!
+Token usage: 1847
+Execution time: 98.3s
+
+════════════════════════════════════════════════════════════════════════════
+## ✅ Task Completed: task_7d2a1f9b
+
+**Description:** Download the mcp-handley-lab repository...
+**Status:** SUCCESS
+**Execution Time:** 98.3s
+**Token Usage:** 1847
+
+### File Changes
+**Created (1):**
+- ✨ mcp-handley-lab/ (repository directory)
+
+**Modified (3):**
+- 📝 mcp-handley-lab/src/fix_file.py
+- 📝 mcp-handley-lab/tests/test_fix.py
+- 📝 mcp-handley-lab/README.md
+
+**Pull Request:** https://github.com/handley-lab/mcp-handley-lab/pull/123
 ════════════════════════════════════════════════════════════════════════════
 ```
 
