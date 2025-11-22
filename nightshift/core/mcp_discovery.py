@@ -3,11 +3,15 @@ MCP Server Discovery - Auto-detect MCP server locations for Docker mounting
 Resolves MCP executables and infers minimal mount paths needed to run them
 """
 import json
+import logging
+import re
 import shutil
 import stat
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def discover_mcp_mount_paths() -> Set[Path]:
@@ -22,7 +26,10 @@ def discover_mcp_mount_paths() -> Set[Path]:
     # Get MCP servers from Claude
     servers = _load_mcp_servers()
     if not servers:
+        logger.warning("No MCP servers found via 'claude mcp list'. MCP tools will not be available in container.")
         return mounts
+
+    logger.debug(f"Discovered {len(servers)} MCP servers: {', '.join(servers.keys())}")
 
     # Add npm global paths if any Node-based MCPs exist
     npm_mounts = _get_npm_global_paths()
@@ -36,6 +43,7 @@ def discover_mcp_mount_paths() -> Set[Path]:
 
         exe_path = _resolve_executable(cmd)
         if not exe_path:
+            logger.warning(f"Could not resolve MCP server '{name}' command: {cmd}")
             continue
 
         # Classify and extract mount paths
@@ -77,20 +85,26 @@ def _load_mcp_servers() -> Dict[str, Tuple[str, List[str]]]:
             timeout=10
         )
         if result.returncode != 0:
+            logger.warning(f"'claude mcp list' failed with exit code {result.returncode}")
+            if result.stderr:
+                logger.debug(f"Error output: {result.stderr}")
             return {}
 
         servers = {}
+        # Pattern: "name: command args - status"
+        # Matches everything between ":" and "-" as the command
+        pattern = r"^([^:]+):\s+(.+?)\s+-"
+
         for line in result.stdout.splitlines():
-            # Parse lines like: "gemini: mcp-gemini  - ✓ Connected"
-            if ":" not in line or "-" not in line:
+            # Strip ANSI color codes if present
+            clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+
+            match = re.match(pattern, clean_line)
+            if not match:
                 continue
 
-            parts = line.split(":")
-            if len(parts) < 2:
-                continue
-
-            name = parts[0].strip()
-            cmd_part = parts[1].split("-")[0].strip()
+            name = match.group(1).strip()
+            cmd_part = match.group(2).strip()
 
             # Split command into executable and args
             cmd_tokens = cmd_part.split()
@@ -103,7 +117,14 @@ def _load_mcp_servers() -> Dict[str, Tuple[str, List[str]]]:
 
         return servers
 
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except subprocess.TimeoutExpired:
+        logger.warning("'claude mcp list' timed out after 10 seconds")
+        return {}
+    except FileNotFoundError:
+        logger.warning("'claude' command not found. Is Claude Code installed?")
+        return {}
+    except OSError as e:
+        logger.warning(f"Failed to execute 'claude mcp list': {e}")
         return {}
 
 

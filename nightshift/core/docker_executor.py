@@ -4,33 +4,42 @@ Wraps Claude CLI execution in Docker for security and isolation
 """
 import os
 import json
+import logging
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import List, Dict, Optional
 
 from .mcp_discovery import discover_mcp_mount_paths
+
+logger = logging.getLogger(__name__)
 
 
 class DockerExecutor:
     """Executes Claude Code in isolated Docker containers"""
 
     @staticmethod
-    def _ensure_absolute_mcp_paths(config_path: Path) -> None:
+    def _create_container_config(source_config_path: Path) -> Path:
         """
-        Rewrite MCP server commands to use absolute paths
+        Create a temporary .claude.json with absolute MCP paths for container use
 
         This ensures MCP servers can be spawned inside containers where
         PATH resolution may differ from the host environment.
+        Does not modify the user's original config file.
 
         Args:
-            config_path: Path to .claude.json config file
+            source_config_path: Path to user's .claude.json config file
+
+        Returns:
+            Path to temporary config file with normalized paths
         """
-        if not config_path.exists():
-            return
+        if not source_config_path.exists():
+            # Return path to non-existent file; Docker mount will handle gracefully
+            return source_config_path
 
         try:
-            with open(config_path, 'r') as f:
+            with open(source_config_path, 'r') as f:
                 config = json.load(f)
 
             servers = config.get("mcpServers", {})
@@ -48,15 +57,27 @@ class DockerExecutor:
                     server_config["command"] = abs_path
                     modified = True
 
-            # Write back if we made changes
+            # Only create temp file if we made changes
             if modified:
-                with open(config_path, 'w') as f:
+                # Create temp file in same directory as original for same filesystem
+                temp_fd, temp_path = tempfile.mkstemp(
+                    suffix='.json',
+                    prefix='.claude.nightshift.',
+                    dir=source_config_path.parent
+                )
+
+                with os.fdopen(temp_fd, 'w') as f:
                     json.dump(config, f, indent=2)
 
+                return Path(temp_path)
+            else:
+                # No changes needed, use original
+                return source_config_path
+
         except (json.JSONDecodeError, IOError) as e:
-            # Don't fail if config is malformed, just skip normalization
-            import sys
-            print(f"Warning: Could not normalize MCP paths in {config_path}: {e}", file=sys.stderr)
+            # Don't fail if config is malformed, just use original
+            logger.warning(f"Could not normalize MCP paths in {source_config_path}: {e}")
+            return source_config_path
 
     def __init__(
         self,
@@ -75,10 +96,7 @@ class DockerExecutor:
         self.image_name = image_name
         self.working_dir = Path(working_dir) if working_dir else Path.cwd()
         self.claude_config_dir = Path(claude_config_dir) if claude_config_dir else Path.home() / ".claude"
-
-        # Ensure MCP commands use absolute paths for container compatibility
-        claude_json = Path.home() / ".claude.json"
-        self._ensure_absolute_mcp_paths(claude_json)
+        self._temp_config_path = None  # Track temp config for cleanup
 
     def build_docker_command(
         self,
@@ -98,7 +116,11 @@ class DockerExecutor:
         cmd = [
             "docker", "run",
             "--rm",  # Remove container after execution
+            "--read-only",  # Make container root filesystem read-only
         ]
+
+        # Temporary writable directories
+        cmd.extend(["--tmpfs", "/tmp"])
 
         # User mapping for file permissions
         uid = os.getuid()
@@ -108,8 +130,8 @@ class DockerExecutor:
         # Volume mounts
         # Mount system directories for interpreters (Python, Node, etc.)
         # MCP server venvs have symlinks pointing to system interpreters
-        # Also mount /opt for Claude installation
-        system_dirs = ["/usr", "/lib", "/lib64", "/opt"]
+        # Note: /opt is handled by MCP discovery, not mounted globally
+        system_dirs = ["/usr", "/lib", "/lib64"]
         for sys_dir in system_dirs:
             sys_path = Path(sys_dir)
             if sys_path.exists():
@@ -119,23 +141,30 @@ class DockerExecutor:
         # This mounts venvs, npm globals, etc. at the same paths to preserve shebangs
         try:
             mcp_mounts = discover_mcp_mount_paths()
-            for mount_path in sorted(mcp_mounts):
-                cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
+            if mcp_mounts:
+                logger.debug(f"Mounting {len(mcp_mounts)} MCP server paths")
+                for mount_path in sorted(mcp_mounts):
+                    cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
         except Exception as e:
             # If discovery fails, log but continue (MCP tools won't work but container will run)
-            import sys
-            print(f"Warning: MCP discovery failed: {e}", file=sys.stderr)
+            logger.error(f"MCP discovery failed: {e}", exc_info=True)
 
         # Mount Claude config as read-write (needs to write debug logs)
         # This overrides the read-only mount if .claude is inside a discovered path
         if self.claude_config_dir.exists():
             cmd.extend(["-v", f"{self.claude_config_dir}:{self.claude_config_dir}"])
 
-        # Mount .claude.json config file (contains MCP server configurations)
+        # Create temporary .claude.json with normalized MCP paths for container
+        # This avoids mutating the user's original config file
+        source_config = Path.home() / ".claude.json"
+        container_config = self._create_container_config(source_config)
+        self._temp_config_path = container_config if container_config != source_config else None
+
+        # Mount the container config (may be temp or original)
         # Must be read-write so Claude can update MCP server state
-        claude_json = Path.home() / ".claude.json"
-        if claude_json.exists():
-            cmd.extend(["-v", f"{claude_json}:{claude_json}"])
+        if container_config.exists():
+            # Mount at the original path inside container
+            cmd.extend(["-v", f"{container_config}:{source_config}"])
 
         # Mount working directory as read-write (for task outputs)
         # This is where Claude creates files that the user can retrieve
@@ -194,16 +223,30 @@ class DockerExecutor:
         Returns:
             subprocess.CompletedProcess result
         """
-        cmd = self.build_docker_command(claude_args, env_vars)
+        try:
+            cmd = self.build_docker_command(claude_args, env_vars)
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
 
-        return result
+            return result
+        finally:
+            # Clean up temporary config file
+            self._cleanup_temp_config()
+
+    def _cleanup_temp_config(self) -> None:
+        """Remove temporary config file if one was created"""
+        if self._temp_config_path and self._temp_config_path.exists():
+            try:
+                self._temp_config_path.unlink()
+                self._temp_config_path = None
+            except OSError:
+                # If cleanup fails, it's not critical
+                pass
 
     def check_image_exists(self) -> bool:
         """

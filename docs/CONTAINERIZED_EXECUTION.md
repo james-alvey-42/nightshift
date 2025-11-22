@@ -72,6 +72,33 @@ echo 'export NIGHTSHIFT_USE_DOCKER=true' >> ~/.bashrc
 export NIGHTSHIFT_DOCKER_IMAGE=my-claude-executor:v1
 ```
 
+## Platform Compatibility
+
+**Containerized execution is currently Linux-only.**
+
+The implementation relies on Linux-specific features:
+
+- **Filesystem layout**: Assumes `/usr`, `/lib`, `/lib64` structure (Debian/Ubuntu/Arch)
+- **User mapping**: Uses `os.getuid()` and `os.getgid()` for UID/GID mapping
+- **MCP discovery**: Expects Linux/Unix file paths and symlink behavior
+
+**macOS limitations**:
+- `/usr`, `/lib` paths are different and more restricted
+- Docker Desktop runs in a VM with different mount semantics
+- User ID mapping works differently
+
+**Windows limitations**:
+- Path separators and drive letters incompatible with mount logic
+- UID/GID concepts don't apply to Windows users
+- WSL2 may work but is untested
+
+If you need containerized execution on macOS or Windows, consider:
+1. Using WSL2 on Windows (may work with modifications)
+2. Using Docker Desktop but expect MCP tool issues
+3. Contributing cross-platform support (PRs welcome!)
+
+For now, **use native execution mode on non-Linux platforms**.
+
 ## Usage
 
 Once enabled, NightShift automatically runs all task executions in containers:
@@ -118,17 +145,33 @@ Please build it with: ./scripts/build-executor.sh
 
 The Docker executor automatically mounts:
 
-1. **Working Directory**: Current directory → `/work` (read-write)
+1. **System Directories** (read-only):
+   - `/usr`, `/lib`, `/lib64` → Provides system interpreters (Python, Node.js) for MCP servers
+   - Mounted read-only for security
+
+2. **MCP Server Paths** (read-only, auto-discovered):
+   - Python virtual environments (e.g., `~/.claude_venv`)
+   - npm global directories
+   - Discovered by parsing `claude mcp list` output
+   - Mounted at the same paths to preserve shebang compatibility
+
+3. **Working Directory** (read-write):
+   - Current directory → `/work`
    - Tasks execute here and can create/modify files
    - Changes persist on the host
 
-2. **Claude Config**: `~/.claude` → `/home/executor/.claude` (read-write)
-   - Shares authentication and MCP server configurations
-   - Requires write access for Claude Code debug logs
+4. **Claude Config** (read-write):
+   - `~/.claude` → MCP server state and debug logs
+   - `~/.claude.json` → Temporary copy with normalized MCP paths
+     - Original config is **not modified** (temporary file created per-execution)
+     - MCP server commands resolved to absolute paths for container compatibility
+     - Temp file cleaned up after execution
 
-3. **User Mapping**: Container runs as your UID:GID
-   - Files created in containers have correct host permissions
-   - No root-owned files in your working directory
+5. **Container Hardening**:
+   - Root filesystem mounted read-only (`--read-only`)
+   - Temporary files in `/tmp` via tmpfs mount
+   - Container runs as your UID:GID (not root)
+   - Files created have correct host permissions
 
 ## How It Works
 
@@ -142,42 +185,129 @@ claude -p "task" --output-format stream-json --allowed-tools Read Write
 ### Containerized Execution
 
 ```bash
-# NightShift wraps in docker run
-docker run --rm \
+# NightShift wraps in docker run with security hardening
+docker run --rm --read-only \
+  --tmpfs /tmp \
   -u 1000:1000 \
+  -v /usr:/usr:ro \
+  -v /lib:/lib:ro \
+  -v /lib64:/lib64:ro \
+  -v ~/.claude_venv:~/.claude_venv:ro \
+  -v ~/.claude:~/.claude \
+  -v ~/.claude.nightshift.XXXXX.json:~/.claude.json \
   -v /path/to/project:/work \
-  -v ~/.claude:/home/executor/.claude \
   -w /work \
+  -e HOME=/home/user \
+  -e PATH=~/.claude_venv/bin:/usr/local/bin:/usr/bin:/bin \
   -e ANTHROPIC_API_KEY \
   nightshift-claude-executor:latest \
   -p "task" --output-format stream-json --allowed-tools Read Write
 ```
 
+Key differences from native execution:
+
+- **Isolation**: System dirs and MCP paths mounted read-only
+- **Hardening**: Container root filesystem read-only, `/tmp` on tmpfs
+- **MCP compatibility**: Absolute paths used, venvs mounted at same locations
+- **Config safety**: Temporary `.claude.json` created, original untouched
+
 The output streaming and parsing works identically in both modes.
 
 ## Security Considerations
 
+### Threat Model
+
+NightShift's containerized execution is designed to protect against:
+
+- **Accidental file access**: Prevent Claude from reading/writing user files outside the working directory
+- **Filesystem damage**: Isolate tasks from modifying system or personal files
+- **Resource exhaustion**: Container can be limited to prevent DoS on host
+
+It is **NOT** designed to protect against:
+
+- **Malicious code execution**: Tasks can still execute arbitrary code within the container
+- **Data exfiltration**: Containers have full network access (required for MCP tools)
+- **API key theft**: Any MCP server or task can read API keys from environment variables
+
 ### What's Protected
 
-- ✅ Host filesystem (except working directory and ~/.claude)
-- ✅ Other running processes
-- ✅ Network namespaces (isolated by default)
-- ✅ System resources (can add CPU/memory limits)
+- ✅ **User home directory**: Not mounted (except `~/.claude` config)
+- ✅ **Other projects**: Only current working directory is accessible
+- ✅ **Container root filesystem**: Mounted read-only to prevent tampering
+- ✅ **System files**: `/usr`, `/lib`, `/lib64` mounted read-only
+- ✅ **MCP server code**: Virtual environments mounted read-only
 
 ### What's Shared
 
-- ⚠️ Working directory (read-write access required for tasks)
-- ⚠️ Claude config and MCP settings (read-write for debug logs)
-- ⚠️ Network access (needed for MCP tools like OpenAI, Gemini, etc.)
-- ⚠️ API keys (passed as environment variables)
+- ⚠️ **Working directory**: Mounted read-write (tasks need to create output files)
+- ⚠️ **Claude config** (`~/.claude`): Mounted read-write (Claude needs to write debug logs)
+- ⚠️ **MCP configuration** (`~/.claude.json`): Mounted read-write (Claude updates MCP server state)
+- ⚠️ **System directories**: `/usr`, `/lib`, `/lib64` mounted read-only for interpreter compatibility
+- ⚠️ **MCP server paths**: Auto-discovered virtual environments mounted read-only
+- ⚠️ **Network access**: Full outbound connectivity (required for MCP APIs)
+- ⚠️ **API keys**: Passed as environment variables (visible to any code running in container)
+
+### MCP Server Trust Model
+
+**Important**: Any MCP server configured in `~/.claude.json` is effectively trusted with:
+
+1. **API keys**: All keys passed to container are readable by MCP servers
+2. **Working directory data**: MCP servers can read any files Claude accesses
+3. **Network access**: MCP servers can make arbitrary network requests
+
+**Recommendation**: Only configure MCP servers from trusted sources. Treat MCP servers as part of your "tooling infrastructure" with the same trust level as your Python packages or npm modules.
+
+### System Directory Mounts
+
+The container mounts `/usr`, `/lib`, and `/lib64` from the host as **read-only** to support MCP servers that depend on system interpreters (Python, Node.js). This is safe because:
+
+- These directories contain system software, not user data
+- They are mounted read-only (cannot be modified)
+- Sensitive data should be in `$HOME`, not system directories
+
+If you have sensitive data in `/usr/local` or `/opt`, be aware these may be mounted if MCP servers are installed there.
+
+### API Key Security
+
+API keys are passed to containers via environment variables and are:
+
+- **Visible to all processes** in the container
+- **Readable by any MCP server** you have configured
+- **Not encrypted** or otherwise protected within the container
+
+**Best practices**:
+
+1. Use dedicated API keys for NightShift (not shared with other applications)
+2. Rotate keys regularly
+3. Review MCP server code before adding new servers
+4. Monitor API usage for unexpected activity
+
+### Network Access
+
+Containers have **full outbound network access** because MCP tools need to call external APIs (OpenAI, Gemini, email, etc.). This means:
+
+- Tasks can exfiltrate any data they access
+- Tasks can make arbitrary HTTP requests
+- Tasks can download and execute code from the internet
+
+For additional security, you can add network restrictions by modifying `docker_executor.py`:
+
+```python
+# Disable network entirely (breaks most MCP tools)
+cmd.extend(["--network", "none"])
+
+# Or use a custom network with firewall rules
+cmd.extend(["--network", "nightshift-restricted"])
+```
 
 ### Best Practices
 
-1. **Review tasks before approval**: Even in containers, tasks can modify your working directory
-2. **Use separate project directories**: Don't run tasks in sensitive directories
-3. **Audit MCP configurations**: Containers use your ~/.claude/settings.json
-4. **Rotate API keys regularly**: Keys are passed to containers as env vars
-5. **Monitor resource usage**: Add limits if running untrusted workloads
+1. **Review tasks before approval**: Understand what a task will do before executing it
+2. **Use separate project directories**: Don't run tasks in directories with sensitive data
+3. **Audit MCP configurations**: Review what servers are installed and what they do
+4. **Rotate API keys regularly**: Treat keys as compromised if exposed to untrusted tasks
+5. **Monitor resource usage**: Add CPU/memory limits for production deployments
+6. **Keep working directories clean**: Don't leave sensitive files in task working directories
 
 ## Adding Resource Limits
 
