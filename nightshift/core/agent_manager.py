@@ -98,6 +98,7 @@ class AgentManager:
                 # Docker execution (list of args, no shell)
                 result = subprocess.run(
                     cmd,
+                    stdin=subprocess.DEVNULL,  # Prevent hanging on stdin
                     capture_output=True,
                     text=True,
                     timeout=timeout
