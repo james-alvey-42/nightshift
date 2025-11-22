@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
 
+from .mcp_discovery import discover_mcp_mount_paths
+
 
 class DockerExecutor:
     """Executes Claude Code in isolated Docker containers"""
@@ -55,12 +57,22 @@ class DockerExecutor:
         cmd.extend(["-u", f"{uid}:{gid}"])
 
         # Volume mounts
-        # Only mount Claude config (read-write - Claude needs to write debug logs)
-        # Working directory is NOT mounted for filesystem isolation
-        if self.claude_config_dir.exists():
-            cmd.extend(["-v", f"{self.claude_config_dir}:/home/executor/.claude"])
+        # Auto-discover and mount MCP server paths (read-only)
+        # This mounts venvs, npm globals, etc. at the same paths to preserve shebangs
+        mcp_mounts = discover_mcp_mount_paths()
+        for mount_path in sorted(mcp_mounts):
+            cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
 
-        # Set working directory (empty container filesystem, isolated from host)
+        # Mount Claude config as read-write (needs to write debug logs)
+        # This overrides the read-only mount if .claude is inside a discovered path
+        if self.claude_config_dir.exists():
+            cmd.extend(["-v", f"{self.claude_config_dir}:{self.claude_config_dir}"])
+
+        # Mount working directory as read-write (for task outputs)
+        # This is where Claude creates files that the user can retrieve
+        cmd.extend(["-v", f"{self.working_dir}:/work"])
+
+        # Set working directory
         cmd.extend(["-w", "/work"])
 
         # Environment variables for API keys
