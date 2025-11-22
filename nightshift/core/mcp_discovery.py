@@ -46,14 +46,17 @@ def discover_mcp_mount_paths() -> Set[Path]:
             interp_path = metadata.get("interpreter")
             if interp_path and "python" in str(interp_path):
                 venv_root = _find_python_venv_root(Path(interp_path))
-                if venv_root:
+                if venv_root and _is_user_path(venv_root):
                     mounts.add(venv_root)
 
-            # Also mount the script's directory
-            mounts.add(exe_path.parent)
+            # Mount the script's directory only if it's a user path
+            # System scripts should be provided in the Docker image
+            if _is_user_path(exe_path):
+                mounts.add(exe_path.parent)
 
         elif kind == "elf" or kind == "unknown":
             # Binary or unknown - mount its parent directory if under user paths
+            # System binaries should be provided in Docker image, not mounted
             if _is_user_path(exe_path):
                 mounts.add(exe_path.parent)
 
@@ -200,7 +203,7 @@ def _find_python_venv_root(python_path: Path) -> Optional[Path]:
 
 
 def _get_npm_global_paths() -> Set[Path]:
-    """Get npm global prefix and root paths"""
+    """Get npm global prefix and root paths (only user paths)"""
     paths = set()
 
     try:
@@ -213,7 +216,7 @@ def _get_npm_global_paths() -> Set[Path]:
         )
         if result.returncode == 0:
             prefix = Path(result.stdout.strip())
-            if prefix.exists():
+            if prefix.exists() and _is_user_path(prefix):
                 paths.add(prefix)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
@@ -228,7 +231,7 @@ def _get_npm_global_paths() -> Set[Path]:
         )
         if result.returncode == 0:
             root = Path(result.stdout.strip())
-            if root.exists():
+            if root.exists() and _is_user_path(root):
                 paths.add(root)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
