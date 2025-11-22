@@ -52,8 +52,12 @@ def cli(ctx):
 @cli.command()
 @click.argument('description')
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
+@click.option('--mount', '-m', multiple=True,
+              help='Additional directory to mount in container (Docker mode only). '
+                   'Format: /host/path or /host/path:/container/path:mode (mode=ro|rw, default:ro). '
+                   'Can be specified multiple times.')
 @click.pass_context
-def submit(ctx, description, auto_approve):
+def submit(ctx, description, auto_approve, mount):
     """Submit a new task"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -61,6 +65,41 @@ def submit(ctx, description, auto_approve):
     agent_manager = ctx.obj['agent_manager']
 
     console.print(f"\n[bold blue]Planning task...[/bold blue]")
+
+    # Parse mount specifications
+    additional_mounts = []
+    if mount:
+        for mount_spec in mount:
+            parts = mount_spec.split(':')
+            if len(parts) == 1:
+                # Just host path, use as-is with readonly
+                additional_mounts.append({
+                    "host_path": parts[0],
+                    "mode": "ro"
+                })
+            elif len(parts) == 2:
+                # host_path:container_path or host_path:mode
+                if parts[1] in ["ro", "rw"]:
+                    additional_mounts.append({
+                        "host_path": parts[0],
+                        "mode": parts[1]
+                    })
+                else:
+                    additional_mounts.append({
+                        "host_path": parts[0],
+                        "container_path": parts[1],
+                        "mode": "ro"
+                    })
+            elif len(parts) == 3:
+                # host_path:container_path:mode
+                additional_mounts.append({
+                    "host_path": parts[0],
+                    "container_path": parts[1],
+                    "mode": parts[2]
+                })
+            else:
+                console.print(f"[yellow]Warning: Ignoring invalid mount spec: {mount_spec}[/yellow]")
+                continue
 
     try:
         # Use Claude to plan the task
@@ -76,7 +115,8 @@ def submit(ctx, description, auto_approve):
             allowed_tools=plan['allowed_tools'],
             system_prompt=plan['system_prompt'],
             estimated_tokens=plan['estimated_tokens'],
-            estimated_time=plan['estimated_time']
+            estimated_time=plan['estimated_time'],
+            additional_mounts=additional_mounts if additional_mounts else None
         )
 
         logger.log_task_created(task_id, description)

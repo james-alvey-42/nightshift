@@ -98,10 +98,50 @@ class DockerExecutor:
         self.claude_config_dir = Path(claude_config_dir) if claude_config_dir else Path.home() / ".claude"
         self._temp_config_path = None  # Track temp config for cleanup
 
+    @staticmethod
+    def _validate_mount_path(path: Path, mode: str = "ro") -> None:
+        """
+        Validate that a mount path is safe to expose to the container
+
+        Args:
+            path: Path to validate
+            mode: Mount mode ('ro' or 'rw')
+
+        Raises:
+            ValueError: If path is unsafe to mount
+        """
+        path_str = str(path.resolve())
+
+        # Dangerous paths that should never be mounted
+        dangerous_paths = [
+            "/",
+            "/etc",
+            "/var",
+            "/root",
+            "/boot",
+            "/dev",
+            "/proc",
+            "/sys",
+        ]
+
+        for dangerous in dangerous_paths:
+            if path_str == dangerous or path_str.startswith(dangerous + "/"):
+                raise ValueError(f"Refusing to mount dangerous path: {path_str}")
+
+        # Warn about mounting $HOME (but allow it)
+        home = str(Path.home())
+        if path_str == home and mode == "rw":
+            logger.warning(f"Mounting entire home directory read-write: {path_str}")
+
+        # Path must exist
+        if not path.exists():
+            raise ValueError(f"Mount path does not exist: {path_str}")
+
     def build_docker_command(
         self,
         claude_args: List[str],
-        env_vars: Optional[Dict[str, str]] = None
+        env_vars: Optional[Dict[str, str]] = None,
+        additional_mounts: Optional[List[Dict[str, str]]] = None
     ) -> List[str]:
         """
         Build docker run command for Claude Code execution
@@ -109,6 +149,11 @@ class DockerExecutor:
         Args:
             claude_args: Arguments to pass to Claude CLI
             env_vars: Environment variables to pass to container
+            additional_mounts: Optional list of additional paths to mount
+                Each dict should have:
+                    - 'host_path': Path on host system
+                    - 'container_path': Path in container (optional, defaults to host_path)
+                    - 'mode': 'ro' or 'rw' (optional, defaults to 'ro')
 
         Returns:
             Complete docker run command as list
@@ -170,6 +215,27 @@ class DockerExecutor:
         # This is where Claude creates files that the user can retrieve
         cmd.extend(["-v", f"{self.working_dir}:/work"])
 
+        # Mount additional user-specified directories
+        if additional_mounts:
+            for mount in additional_mounts:
+                host_path = Path(mount["host_path"])
+                container_path = mount.get("container_path", str(host_path))
+                mode = mount.get("mode", "ro")
+
+                # Validate mount path
+                try:
+                    self._validate_mount_path(host_path, mode)
+                except ValueError as e:
+                    logger.error(f"Skipping invalid mount: {e}")
+                    continue
+
+                # Add mount
+                mount_spec = f"{host_path}:{container_path}"
+                if mode:
+                    mount_spec += f":{mode}"
+                cmd.extend(["-v", mount_spec])
+                logger.info(f"Mounting additional path: {host_path} -> {container_path} ({mode})")
+
         # Set working directory
         cmd.extend(["-w", "/work"])
 
@@ -210,7 +276,8 @@ class DockerExecutor:
         self,
         claude_args: List[str],
         env_vars: Optional[Dict[str, str]] = None,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        additional_mounts: Optional[List[Dict[str, str]]] = None
     ) -> subprocess.CompletedProcess:
         """
         Execute Claude Code in Docker container
@@ -219,12 +286,17 @@ class DockerExecutor:
             claude_args: Arguments to pass to Claude CLI
             env_vars: Environment variables to pass to container
             timeout: Optional timeout in seconds
+            additional_mounts: Optional list of additional paths to mount
+                Each dict should have:
+                    - 'host_path': Path on host system
+                    - 'container_path': Path in container (optional, defaults to host_path)
+                    - 'mode': 'ro' or 'rw' (optional, defaults to 'ro')
 
         Returns:
             subprocess.CompletedProcess result
         """
         try:
-            cmd = self.build_docker_command(claude_args, env_vars)
+            cmd = self.build_docker_command(claude_args, env_vars, additional_mounts)
 
             result = subprocess.run(
                 cmd,

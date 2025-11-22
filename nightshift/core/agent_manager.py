@@ -78,7 +78,10 @@ class AgentManager:
             if self.use_docker:
                 # Use Docker executor
                 claude_args = self._build_claude_args(task)
-                cmd = self.docker_executor.build_docker_command(claude_args)
+                cmd = self.docker_executor.build_docker_command(
+                    claude_args,
+                    additional_mounts=task.additional_mounts
+                )
                 cmd_str = " ".join(cmd)  # For logging
             else:
                 # Use native execution
@@ -95,12 +98,11 @@ class AgentManager:
 
             # Execute with timeout
             if self.use_docker:
-                # Docker execution (list of args, no shell)
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
+                # Docker execution using executor's execute method
+                result = self.docker_executor.execute(
+                    claude_args,
+                    timeout=timeout,
+                    additional_mounts=task.additional_mounts
                 )
             else:
                 # Native execution (string, with shell)
