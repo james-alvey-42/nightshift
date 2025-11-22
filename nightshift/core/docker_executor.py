@@ -59,14 +59,25 @@ class DockerExecutor:
         # Volume mounts
         # Auto-discover and mount MCP server paths (read-only)
         # This mounts venvs, npm globals, etc. at the same paths to preserve shebangs
-        mcp_mounts = discover_mcp_mount_paths()
-        for mount_path in sorted(mcp_mounts):
-            cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
+        try:
+            mcp_mounts = discover_mcp_mount_paths()
+            for mount_path in sorted(mcp_mounts):
+                cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
+        except Exception as e:
+            # If discovery fails, log but continue (MCP tools won't work but container will run)
+            import sys
+            print(f"Warning: MCP discovery failed: {e}", file=sys.stderr)
 
         # Mount Claude config as read-write (needs to write debug logs)
         # This overrides the read-only mount if .claude is inside a discovered path
         if self.claude_config_dir.exists():
             cmd.extend(["-v", f"{self.claude_config_dir}:{self.claude_config_dir}"])
+
+        # Mount .claude.json config file (contains MCP server configurations)
+        # Must be read-write so Claude can update MCP server state
+        claude_json = Path.home() / ".claude.json"
+        if claude_json.exists():
+            cmd.extend(["-v", f"{claude_json}:{claude_json}"])
 
         # Mount working directory as read-write (for task outputs)
         # This is where Claude creates files that the user can retrieve
@@ -74,6 +85,14 @@ class DockerExecutor:
 
         # Set working directory
         cmd.extend(["-w", "/work"])
+
+        # Set HOME to match where we mounted .claude config
+        home_dir = str(Path.home())
+        cmd.extend(["-e", f"HOME={home_dir}"])
+
+        # Set PATH to include venv binaries for MCP servers
+        venv_bin = f"{Path.home()}/.claude_venv/bin"
+        cmd.extend(["-e", f"PATH={venv_bin}:/usr/local/bin:/usr/bin:/bin"])
 
         # Environment variables for API keys
         if env_vars:
