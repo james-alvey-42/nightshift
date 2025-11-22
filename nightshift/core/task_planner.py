@@ -63,6 +63,9 @@ Your job is to analyze a user's task description and determine:
 2. What system prompt the executor agent should use
 3. How to enhance/clarify the user's prompt if needed
 4. Estimated resource usage
+5. Appropriate execution environment (local, docker, or cloud)
+6. Required software stack and dependencies
+7. Containerization recommendations if applicable
 
 USER TASK:
 {description}
@@ -77,7 +80,25 @@ Respond with ONLY a JSON object (no other text) with this structure:
     "system_prompt": "System prompt for the executor",
     "estimated_tokens": 1000,
     "estimated_time": 60,
-    "reasoning": "Brief explanation of tool choices"
+    "reasoning": "Brief explanation of tool choices",
+    "execution_environment": {{
+        "type": "local",
+        "reasoning": "Why this environment is recommended"
+    }},
+    "software_stack": {{
+        "python_packages": ["package1", "package2"],
+        "system_packages": ["apt-package1", "binary1"],
+        "requirements": {{
+            "python_version": "3.11",
+            "memory_gb": 2,
+            "disk_gb": 1
+        }}
+    }},
+    "containerization": {{
+        "recommended": false,
+        "base_image": "python:3.11-slim",
+        "dockerfile_hints": ["RUN pip install package1", "RUN apt-get install -y binary1"]
+    }}
 }}
 
 Guidelines:
@@ -86,6 +107,21 @@ Guidelines:
 - For arxiv tasks, include mcp__arxiv__download and either mcp__gemini__ask or mcp__claude__ask for summarization
 - Estimated time: simple tasks 30s, paper analysis 60s, data analysis 120s
 - Estimated tokens: add ~2000 for paper tasks, ~1000 for data tasks, ~500 base
+
+Environment Selection:
+- Use "local" for most tasks using available MCP tools
+- Use "docker" if task requires specific versions of system packages or isolation
+- Use "cloud" if task requires significant compute resources (>8GB RAM, GPU, long-running)
+
+Software Stack Analysis:
+- Analyze the task and tools to infer required Python packages (e.g., pandas for CSV, matplotlib for plots)
+- Include system packages if task involves compiling, image processing, or specific binaries
+- Estimate reasonable resource requirements based on task complexity
+
+Containerization:
+- Recommend containerization for tasks with complex dependencies or reproducibility requirements
+- Suggest appropriate base image (python:3.11-slim for Python, ubuntu:22.04 for system work)
+- Provide key Dockerfile commands if containerization is recommended
 """
 
         try:
@@ -99,9 +135,42 @@ Guidelines:
                     "system_prompt": {"type": "string"},
                     "estimated_tokens": {"type": "integer"},
                     "estimated_time": {"type": "integer"},
-                    "reasoning": {"type": "string"}
+                    "reasoning": {"type": "string"},
+                    "execution_environment": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["local", "docker", "cloud"]},
+                            "reasoning": {"type": "string"}
+                        },
+                        "required": ["type", "reasoning"]
+                    },
+                    "software_stack": {
+                        "type": "object",
+                        "properties": {
+                            "python_packages": {"type": "array", "items": {"type": "string"}},
+                            "system_packages": {"type": "array", "items": {"type": "string"}},
+                            "requirements": {
+                                "type": "object",
+                                "properties": {
+                                    "python_version": {"type": "string"},
+                                    "memory_gb": {"type": "number"},
+                                    "disk_gb": {"type": "number"}
+                                }
+                            }
+                        },
+                        "required": ["python_packages", "system_packages", "requirements"]
+                    },
+                    "containerization": {
+                        "type": "object",
+                        "properties": {
+                            "recommended": {"type": "boolean"},
+                            "base_image": {"type": "string"},
+                            "dockerfile_hints": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["recommended"]
+                    }
                 },
-                "required": ["enhanced_prompt", "allowed_tools", "system_prompt", "estimated_tokens", "estimated_time"]
+                "required": ["enhanced_prompt", "allowed_tools", "system_prompt", "estimated_tokens", "estimated_time", "execution_environment", "software_stack", "containerization"]
             })
 
             cmd = [
@@ -204,6 +273,7 @@ Allowed Tools: {', '.join(current_plan.get('allowed_tools', []))}
 System Prompt: {current_plan.get('system_prompt', 'N/A')}
 Estimated Tokens: {current_plan.get('estimated_tokens', 0)}
 Estimated Time: {current_plan.get('estimated_time', 0)}s
+Execution Environment: {current_plan.get('execution_environment', {}).get('type', 'N/A')}
 
 USER FEEDBACK:
 {feedback}
@@ -218,7 +288,25 @@ Based on the user's feedback, create a REVISED plan. Respond with ONLY a JSON ob
     "system_prompt": "Revised system prompt for the executor",
     "estimated_tokens": 1000,
     "estimated_time": 60,
-    "reasoning": "Brief explanation of how the feedback was incorporated"
+    "reasoning": "Brief explanation of how the feedback was incorporated",
+    "execution_environment": {{
+        "type": "local",
+        "reasoning": "Why this environment is recommended"
+    }},
+    "software_stack": {{
+        "python_packages": ["package1", "package2"],
+        "system_packages": ["apt-package1", "binary1"],
+        "requirements": {{
+            "python_version": "3.11",
+            "memory_gb": 2,
+            "disk_gb": 1
+        }}
+    }},
+    "containerization": {{
+        "recommended": false,
+        "base_image": "python:3.11-slim",
+        "dockerfile_hints": ["RUN pip install package1"]
+    }}
 }}
 
 Guidelines:
@@ -226,6 +314,7 @@ Guidelines:
 - Maintain the overall task objectives unless feedback suggests otherwise
 - Adjust tool selection if the user requests different capabilities
 - Update estimates based on scope changes
+- Update environment and stack recommendations if feedback suggests changes
 - Explain what changed in the reasoning field
 """
 
@@ -239,10 +328,44 @@ Guidelines:
                     "system_prompt": {"type": "string"},
                     "estimated_tokens": {"type": "integer"},
                     "estimated_time": {"type": "integer"},
-                    "reasoning": {"type": "string"}
+                    "reasoning": {"type": "string"},
+                    "execution_environment": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["local", "docker", "cloud"]},
+                            "reasoning": {"type": "string"}
+                        },
+                        "required": ["type", "reasoning"]
+                    },
+                    "software_stack": {
+                        "type": "object",
+                        "properties": {
+                            "python_packages": {"type": "array", "items": {"type": "string"}},
+                            "system_packages": {"type": "array", "items": {"type": "string"}},
+                            "requirements": {
+                                "type": "object",
+                                "properties": {
+                                    "python_version": {"type": "string"},
+                                    "memory_gb": {"type": "number"},
+                                    "disk_gb": {"type": "number"}
+                                }
+                            }
+                        },
+                        "required": ["python_packages", "system_packages", "requirements"]
+                    },
+                    "containerization": {
+                        "type": "object",
+                        "properties": {
+                            "recommended": {"type": "boolean"},
+                            "base_image": {"type": "string"},
+                            "dockerfile_hints": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["recommended"]
+                    }
                 },
                 "required": ["enhanced_prompt", "allowed_tools", "system_prompt",
-                             "estimated_tokens", "estimated_time"]
+                             "estimated_tokens", "estimated_time", "execution_environment",
+                             "software_stack", "containerization"]
             })
 
             cmd = [

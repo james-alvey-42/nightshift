@@ -75,7 +75,10 @@ def submit(ctx, description, auto_approve, planning_timeout):
             allowed_tools=plan['allowed_tools'],
             system_prompt=plan['system_prompt'],
             estimated_tokens=plan['estimated_tokens'],
-            estimated_time=plan['estimated_time']
+            estimated_time=plan['estimated_time'],
+            execution_environment=plan.get('execution_environment'),
+            software_stack=plan.get('software_stack'),
+            containerization=plan.get('containerization')
         )
 
         logger.log_task_created(task_id, description)
@@ -83,12 +86,46 @@ def submit(ctx, description, auto_approve, planning_timeout):
         # Display plan
         console.print(f"\n[bold green]✓ Task created:[/bold green] {task_id}")
 
-        panel = Panel.fit(
+        # Build the panel content
+        panel_content = (
             f"[yellow]Original:[/yellow] {description}\n\n"
             f"[yellow]Enhanced prompt:[/yellow] {plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(plan['allowed_tools'])}\n\n"
             f"[yellow]Estimated:[/yellow] ~{plan['estimated_tokens']} tokens, ~{plan['estimated_time']}s\n\n"
-            f"[yellow]Reasoning:[/yellow] {plan.get('reasoning', 'N/A')}",
+            f"[yellow]Reasoning:[/yellow] {plan.get('reasoning', 'N/A')}"
+        )
+
+        # Add environment info
+        exec_env = plan.get('execution_environment', {})
+        if exec_env:
+            env_type = exec_env.get('type', 'N/A')
+            env_reasoning = exec_env.get('reasoning', 'N/A')
+            panel_content += f"\n\n[cyan]Execution Environment:[/cyan] {env_type}\n[dim]{env_reasoning}[/dim]"
+
+        # Add software stack info
+        stack = plan.get('software_stack', {})
+        if stack:
+            py_pkgs = stack.get('python_packages', [])
+            sys_pkgs = stack.get('system_packages', [])
+            reqs = stack.get('requirements', {})
+
+            if py_pkgs or sys_pkgs:
+                panel_content += f"\n\n[cyan]Software Stack:[/cyan]"
+                if py_pkgs:
+                    panel_content += f"\n  • Python packages: {', '.join(py_pkgs) if py_pkgs else 'none'}"
+                if sys_pkgs:
+                    panel_content += f"\n  • System packages: {', '.join(sys_pkgs) if sys_pkgs else 'none'}"
+                if reqs:
+                    panel_content += f"\n  • Python: {reqs.get('python_version', 'N/A')}, RAM: {reqs.get('memory_gb', 'N/A')}GB, Disk: {reqs.get('disk_gb', 'N/A')}GB"
+
+        # Add containerization info
+        container = plan.get('containerization', {})
+        if container and container.get('recommended'):
+            base_image = container.get('base_image', 'N/A')
+            panel_content += f"\n\n[cyan]Containerization:[/cyan] Recommended\n  • Base image: {base_image}"
+
+        panel = Panel.fit(
+            panel_content,
             title=f"Task Plan: {task_id}",
             border_style="blue"
         )
@@ -238,6 +275,27 @@ def results(ctx, task_id, show_output):
     if task.execution_time:
         console.print(f"[yellow]Execution Time:[/yellow] {task.execution_time:.1f}s")
 
+    # Display environment and stack info
+    if task.execution_environment:
+        env = task.execution_environment
+        console.print(f"\n[cyan]Execution Environment:[/cyan] {env.get('type', 'N/A')}")
+        console.print(f"[dim]{env.get('reasoning', 'N/A')}[/dim]")
+
+    if task.software_stack:
+        stack = task.software_stack
+        console.print(f"\n[cyan]Software Stack:[/cyan]")
+        if stack.get('python_packages'):
+            console.print(f"  • Python packages: {', '.join(stack['python_packages'])}")
+        if stack.get('system_packages'):
+            console.print(f"  • System packages: {', '.join(stack['system_packages'])}")
+        if stack.get('requirements'):
+            reqs = stack['requirements']
+            console.print(f"  • Python: {reqs.get('python_version', 'N/A')}, RAM: {reqs.get('memory_gb', 'N/A')}GB, Disk: {reqs.get('disk_gb', 'N/A')}GB")
+
+    if task.containerization and task.containerization.get('recommended'):
+        console.print(f"\n[cyan]Containerization:[/cyan] Recommended")
+        console.print(f"  • Base image: {task.containerization.get('base_image', 'N/A')}")
+
     if task.error_message:
         console.print(f"\n[bold red]Error:[/bold red] {task.error_message}")
 
@@ -297,7 +355,10 @@ def revise(ctx, task_id, feedback):
             allowed_tools=revised_plan['allowed_tools'],
             system_prompt=revised_plan['system_prompt'],
             estimated_tokens=revised_plan['estimated_tokens'],
-            estimated_time=revised_plan['estimated_time']
+            estimated_time=revised_plan['estimated_time'],
+            execution_environment=revised_plan.get('execution_environment'),
+            software_stack=revised_plan.get('software_stack'),
+            containerization=revised_plan.get('containerization')
         )
 
         if not success:
