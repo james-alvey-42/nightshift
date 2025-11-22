@@ -55,14 +55,12 @@ class DockerExecutor:
         cmd.extend(["-u", f"{uid}:{gid}"])
 
         # Volume mounts
-        # Working directory (read-write)
-        cmd.extend(["-v", f"{self.working_dir}:/work"])
-
-        # Claude config (read-write - Claude needs to write debug logs)
+        # Only mount Claude config (read-write - Claude needs to write debug logs)
+        # Working directory is NOT mounted for filesystem isolation
         if self.claude_config_dir.exists():
             cmd.extend(["-v", f"{self.claude_config_dir}:/home/executor/.claude"])
 
-        # Set working directory
+        # Set working directory (empty container filesystem, isolated from host)
         cmd.extend(["-w", "/work"])
 
         # Environment variables for API keys
