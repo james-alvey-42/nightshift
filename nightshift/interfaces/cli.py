@@ -22,6 +22,16 @@ from ..core.config import Config
 console = Console()
 
 
+def _normalize_host_path(raw_path: str) -> str:
+    """Return an absolute host path string for mount storage."""
+    expanded = Path(raw_path).expanduser()
+    try:
+        return str(expanded.resolve(strict=False))
+    except Exception:
+        # Fallback to absolute path if resolution fails
+        return str(expanded.absolute())
+
+
 @click.group()
 @click.pass_context
 def cli(ctx):
@@ -71,29 +81,30 @@ def submit(ctx, description, auto_approve, mount):
     if mount:
         for mount_spec in mount:
             parts = mount_spec.split(':')
+            host_path = _normalize_host_path(parts[0])
             if len(parts) == 1:
                 # Just host path, use as-is with readonly
                 additional_mounts.append({
-                    "host_path": parts[0],
+                    "host_path": host_path,
                     "mode": "ro"
                 })
             elif len(parts) == 2:
                 # host_path:container_path or host_path:mode
                 if parts[1] in ["ro", "rw"]:
                     additional_mounts.append({
-                        "host_path": parts[0],
+                        "host_path": host_path,
                         "mode": parts[1]
                     })
                 else:
                     additional_mounts.append({
-                        "host_path": parts[0],
+                        "host_path": host_path,
                         "container_path": parts[1],
                         "mode": "ro"
                     })
             elif len(parts) == 3:
                 # host_path:container_path:mode
                 additional_mounts.append({
-                    "host_path": parts[0],
+                    "host_path": host_path,
                     "container_path": parts[1],
                     "mode": parts[2]
                 })

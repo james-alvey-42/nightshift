@@ -295,16 +295,24 @@ class DockerExecutor:
         Returns:
             subprocess.CompletedProcess result
         """
-        try:
-            cmd = self.build_docker_command(claude_args, env_vars, additional_mounts)
+        cmd = self.build_docker_command(claude_args, env_vars, additional_mounts)
+        return self.run_prepared_command(cmd, timeout=timeout)
 
+    def run_prepared_command(
+        self,
+        cmd: List[str],
+        timeout: Optional[int] = None
+    ) -> subprocess.CompletedProcess:
+        """
+        Execute a previously built docker command and handle cleanup.
+        """
+        try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout
             )
-
             return result
         finally:
             # Clean up temporary config file

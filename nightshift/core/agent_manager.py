@@ -99,10 +99,9 @@ class AgentManager:
             # Execute with timeout
             if self.use_docker:
                 # Docker execution using executor's execute method
-                result = self.docker_executor.execute(
-                    claude_args,
-                    timeout=timeout,
-                    additional_mounts=task.additional_mounts
+                result = self.docker_executor.run_prepared_command(
+                    cmd,
+                    timeout=timeout
                 )
             else:
                 # Native execution (string, with shell)
