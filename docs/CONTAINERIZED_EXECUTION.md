@@ -25,7 +25,7 @@ Container (Per Task):
   ├── Claude CLI
   ├── MCP Servers
   ├── Task Working Directory (mounted)
-  └── Claude Config (mounted read-only)
+  └── Claude Config (mounted read-write)
 ```
 
 ## Setup
@@ -122,9 +122,9 @@ The Docker executor automatically mounts:
    - Tasks execute here and can create/modify files
    - Changes persist on the host
 
-2. **Claude Config**: `~/.claude` → `/home/executor/.claude` (read-only)
+2. **Claude Config**: `~/.claude` → `/home/executor/.claude` (read-write)
    - Shares authentication and MCP server configurations
-   - Mounted read-only for security
+   - Requires write access for Claude Code debug logs
 
 3. **User Mapping**: Container runs as your UID:GID
    - Files created in containers have correct host permissions
@@ -146,7 +146,7 @@ claude -p "task" --output-format stream-json --allowed-tools Read Write
 docker run --rm \
   -u 1000:1000 \
   -v /path/to/project:/work \
-  -v ~/.claude:/home/executor/.claude:ro \
+  -v ~/.claude:/home/executor/.claude \
   -w /work \
   -e ANTHROPIC_API_KEY \
   nightshift-claude-executor:latest \
@@ -167,7 +167,7 @@ The output streaming and parsing works identically in both modes.
 ### What's Shared
 
 - ⚠️ Working directory (read-write access required for tasks)
-- ⚠️ Claude config and MCP settings (read-only)
+- ⚠️ Claude config and MCP settings (read-write for debug logs)
 - ⚠️ Network access (needed for MCP tools like OpenAI, Gemini, etc.)
 - ⚠️ API keys (passed as environment variables)
 

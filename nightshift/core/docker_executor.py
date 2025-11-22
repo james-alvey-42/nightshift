@@ -59,9 +59,9 @@ class DockerExecutor:
         # Working directory (read-write)
         cmd.extend(["-v", f"{self.working_dir}:/work"])
 
-        # Claude config (read-only for security)
+        # Claude config (read-write - Claude needs to write debug logs)
         if self.claude_config_dir.exists():
-            cmd.extend(["-v", f"{self.claude_config_dir}:/home/executor/.claude:ro"])
+            cmd.extend(["-v", f"{self.claude_config_dir}:/home/executor/.claude"])
 
         # Set working directory
         cmd.extend(["-w", "/work"])
