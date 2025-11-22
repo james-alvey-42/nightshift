@@ -44,14 +44,18 @@ def discover_mcp_mount_paths() -> Set[Path]:
         if kind == "script":
             # Script with shebang - check for Python venv
             interp_path = metadata.get("interpreter")
+            venv_found = False
             if interp_path and "python" in str(interp_path):
                 venv_root = _find_python_venv_root(Path(interp_path))
                 if venv_root and _is_user_path(venv_root):
                     mounts.add(venv_root)
+                    venv_found = True
 
-            # Mount the script's directory only if it's a user path
+            # Mount the script's directory only if:
+            # - It's a user path
+            # - We didn't already mount a venv that contains it
             # System scripts should be provided in the Docker image
-            if _is_user_path(exe_path):
+            if not venv_found and _is_user_path(exe_path):
                 mounts.add(exe_path.parent)
 
         elif kind == "elf" or kind == "unknown":
@@ -180,17 +184,19 @@ def _read_shebang(path: Path) -> Optional[Tuple[str, List[str]]]:
 
 def _find_python_venv_root(python_path: Path) -> Optional[Path]:
     """Find Python virtualenv root directory"""
-    try:
-        p = python_path.resolve()
-    except OSError:
-        return None
+    # Don't resolve symlinks - we want the venv path, not the system python
+    # Typical venv structure: venv/bin/python -> /usr/bin/python3.x (symlink)
+    p = python_path
 
-    # Typical venv structure: venv/bin/python
     # Check parent's parent for venv markers
+    # For /path/to/venv/bin/python, parent.parent is /path/to/venv
     candidates = [p.parent.parent, p.parent.parent.parent]
 
     for root in candidates:
-        if not root.exists():
+        try:
+            if not root.exists():
+                continue
+        except OSError:
             continue
 
         # Check for venv markers
