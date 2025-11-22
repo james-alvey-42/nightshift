@@ -43,7 +43,9 @@ def cli(ctx):
     ctx.obj['agent_manager'] = AgentManager(
         ctx.obj['task_queue'],
         ctx.obj['logger'],
-        output_dir=str(config.get_output_dir())
+        output_dir=str(config.get_output_dir()),
+        use_docker=config.use_docker,
+        docker_image=config.docker_image
     )
 
 

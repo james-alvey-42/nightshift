@@ -89,6 +89,26 @@ cd nightshift
 pip install -e .
 ```
 
+### Containerized Execution (Optional)
+
+For enhanced security and isolation, you can run Claude Code tasks in Docker containers:
+
+```bash
+# Build the executor container
+./scripts/build-executor.sh
+
+# Enable containerized execution
+export NIGHTSHIFT_USE_DOCKER=true
+```
+
+Tasks will now execute in isolated containers while NightShift runs natively. See [docs/CONTAINERIZED_EXECUTION.md](docs/CONTAINERIZED_EXECUTION.md) for full details.
+
+**Benefits:**
+- Task isolation and sandboxing
+- Resource limits (CPU/memory)
+- Reproducible environments
+- Enhanced security
+
 ## Usage
 
 ### Submit a task
