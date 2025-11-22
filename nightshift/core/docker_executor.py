@@ -130,8 +130,8 @@ class DockerExecutor:
         # Volume mounts
         # Mount system directories for interpreters (Python, Node, etc.)
         # MCP server venvs have symlinks pointing to system interpreters
-        # Note: /opt is handled by MCP discovery, not mounted globally
-        system_dirs = ["/usr", "/lib", "/lib64"]
+        # /opt is needed for Claude CLI installation (/opt/claude-code)
+        system_dirs = ["/usr", "/lib", "/lib64", "/opt"]
         for sys_dir in system_dirs:
             sys_path = Path(sys_dir)
             if sys_path.exists():
