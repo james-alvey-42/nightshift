@@ -303,7 +303,7 @@ def revise(ctx, task_id, feedback):
             console.print(f"\n[bold red]Error:[/bold red] Failed to update task plan\n")
             raise click.Abort()
 
-        logger.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
+        task_queue.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
 
         # Display revised plan
         console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
