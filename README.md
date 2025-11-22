@@ -225,9 +225,11 @@ nightshift clear --confirm
 ```
 </details>
 
+---
+
 ## Example Workflows
 
-### Research Paper Analysis
+### 📄 Research Paper Analysis
 
 ```bash
 $ nightshift submit "Download arxiv paper 2510.13997 and summarize using Gemini"
@@ -272,7 +274,7 @@ Execution time: 122.9s
 ════════════════════════════════════════════════════════════════════════════
 ```
 
-### Code Repository Management
+### 🔧 Code Repository Management
 
 ```bash
 $ nightshift submit "Download the mcp-handley-lab repository from the handley-lab GitHub organization and create a pull request addressing issue #50"
@@ -324,7 +326,7 @@ Execution time: 98.3s
 ════════════════════════════════════════════════════════════════════════════
 ```
 
-### Plan Revision Workflow
+### ✏️ Plan Revision Workflow
 
 ```bash
 $ nightshift submit "Analyze the latest trends in quantum computing"
@@ -370,10 +372,24 @@ $ nightshift approve task_9b4e2c1a
 ✓ Task completed successfully!
 ```
 
+---
+
 ## Development Notes
 
-- Task planner uses `claude -p` with `--json-schema` to ensure structured output
-- Executor uses `claude -p` with `--verbose --output-format stream-json`
-- File tracking takes snapshots before/after execution
-- No timeout by default during development (can be added later)
-- All Claude calls are subprocess executions (no SDK)
+> **Technical Details**
+
+- 🎯 Task planner uses `claude -p` with `--json-schema` to ensure structured output
+- ⚙️ Executor uses `claude -p` with `--verbose --output-format stream-json`
+- 📸 File tracking takes snapshots before/after execution
+- ⏱️ No timeout by default during development (can be added later)
+- 🔌 All Claude calls are subprocess executions (no SDK)
+
+---
+
+<div align="center">
+
+**Built with Claude Code** • **Powered by MCP**
+
+Made with ❤️ for researchers and developers
+
+</div>
