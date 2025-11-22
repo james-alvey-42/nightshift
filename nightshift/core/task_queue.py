@@ -180,6 +180,11 @@ class TaskQueue:
             if not row:
                 return None
 
+            # Handle new columns that may not exist in old databases
+            execution_env = row["execution_environment"] if "execution_environment" in row.keys() else None
+            soft_stack = row["software_stack"] if "software_stack" in row.keys() else None
+            container = row["containerization"] if "containerization" in row.keys() else None
+
             return Task(
                 task_id=row["task_id"],
                 description=row["description"],
@@ -197,9 +202,9 @@ class TaskQueue:
                 error_message=row["error_message"],
                 token_usage=row["token_usage"],
                 execution_time=row["execution_time"],
-                execution_environment=json.loads(row["execution_environment"]) if row.get("execution_environment") else None,
-                software_stack=json.loads(row["software_stack"]) if row.get("software_stack") else None,
-                containerization=json.loads(row["containerization"]) if row.get("containerization") else None
+                execution_environment=json.loads(execution_env) if execution_env else None,
+                software_stack=json.loads(soft_stack) if soft_stack else None,
+                containerization=json.loads(container) if container else None
             )
 
     def list_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
@@ -219,6 +224,11 @@ class TaskQueue:
 
             tasks = []
             for row in cursor.fetchall():
+                # Handle new columns that may not exist in old databases
+                execution_env = row["execution_environment"] if "execution_environment" in row.keys() else None
+                soft_stack = row["software_stack"] if "software_stack" in row.keys() else None
+                container = row["containerization"] if "containerization" in row.keys() else None
+
                 tasks.append(Task(
                     task_id=row["task_id"],
                     description=row["description"],
@@ -236,9 +246,9 @@ class TaskQueue:
                     error_message=row["error_message"],
                     token_usage=row["token_usage"],
                     execution_time=row["execution_time"],
-                    execution_environment=json.loads(row["execution_environment"]) if row.get("execution_environment") else None,
-                    software_stack=json.loads(row["software_stack"]) if row.get("software_stack") else None,
-                    containerization=json.loads(row["containerization"]) if row.get("containerization") else None
+                    execution_environment=json.loads(execution_env) if execution_env else None,
+                    software_stack=json.loads(soft_stack) if soft_stack else None,
+                    containerization=json.loads(container) if container else None
                 ))
 
             return tasks
