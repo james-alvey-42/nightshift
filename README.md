@@ -22,24 +22,23 @@
 
 NightShift is a working prototype that automates research tasks using Claude Code in headless mode. The system uses a "task planner" agent to analyze requests, select appropriate tools, and execute tasks through a staged approval workflow.
 
-## Architecture
+### How It Works
 
-```
-User Request
-    ↓
-Task Planner Agent (Claude)
-    ↓
-[Analyzes task, selects MCP tools, estimates resources]
-    ↓
-Task Queue (STAGED)
-    ↓
-User Approval
-    ↓
-Executor Agent (Claude headless)
-    ↓
-[Executes with selected tools, tracks files]
-    ↓
-Notification + Results
+```mermaid
+graph TD
+    A[User Request] --> B[Task Planner Agent]
+    B --> C{Analyzes task<br/>Selects MCP tools<br/>Estimates resources}
+    C --> D[Task Queue<br/>STAGED]
+    D --> E{User Approval}
+    E --> F[Executor Agent<br/>Claude headless]
+    F --> G{Executes with tools<br/>Tracks file changes}
+    G --> H[Notification + Results]
+
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style D fill:#ffe1f5
+    style F fill:#fff4e1
+    style H fill:#e1ffe1
 ```
 
 ## Project Structure
