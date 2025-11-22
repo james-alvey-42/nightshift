@@ -2,6 +2,14 @@
 
 A comprehensive reference of all built-in and MCP server tools available in Claude Code.
 
+**IMPORTANT NOTE:** This tools list is specific to the user's Claude Code configuration and MCP server setup. Each user must regenerate this file based on their own installed MCP servers. This particular reference is linked to the [handley-lab/mcp-handley-lab](https://github.com/handley-lab/mcp-handley-lab) GitHub repository and includes those specific MCP tools.
+
+To regenerate this file for your own setup, run:
+```bash
+# List all available tools in your Claude Code environment
+# Then update this file accordingly
+```
+
 ## Built-in Development Tools
 
 ### File Operations
