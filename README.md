@@ -1,29 +1,44 @@
-# NightShift - Automated Research Assistant System
+<div align="center">
 
-An AI-driven agent manager for scientific research automation, powered by Claude Code's headless mode and MCP tools.
+<img src="assets/logo.png" alt="NightShift Logo" width="200"/>
 
-## Status: ✅ MVP Complete
+# NightShift
+
+**Automated Research Assistant System**
+
+[![Status](https://img.shields.io/badge/status-MVP%20Complete-success)](https://github.com)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+*An AI-driven agent manager for scientific research automation, powered by Claude Code's headless mode and MCP tools.*
+
+[Features](#features) • [Installation](#installation) • [Usage](#usage) • [Examples](#example-workflows)
+
+</div>
+
+---
+
+## Overview
 
 NightShift is a working prototype that automates research tasks using Claude Code in headless mode. The system uses a "task planner" agent to analyze requests, select appropriate tools, and execute tasks through a staged approval workflow.
 
-## Architecture
+### How It Works
 
-```
-User Request
-    ↓
-Task Planner Agent (Claude)
-    ↓
-[Analyzes task, selects MCP tools, estimates resources]
-    ↓
-Task Queue (STAGED)
-    ↓
-User Approval
-    ↓
-Executor Agent (Claude headless)
-    ↓
-[Executes with selected tools, tracks files]
-    ↓
-Notification + Results
+```mermaid
+graph TD
+    A[User Request] --> B[Task Planner Agent]
+    B --> C{Analyzes task<br/>Selects MCP tools<br/>Estimates resources}
+    C --> D[Task Queue<br/>STAGED]
+    D --> E{User Approval}
+    E --> F[Executor Agent<br/>Claude headless]
+    F --> G{Executes with tools<br/>Tracks file changes}
+    G --> H[Notification + Results]
+
+    style A fill:#e1f5ff
+    style B fill:#fff4e1
+    style D fill:#ffe1f5
+    style F fill:#fff4e1
+    style H fill:#e1ffe1
 ```
 
 ## Project Structure
@@ -63,25 +78,64 @@ All NightShift data is stored in `~/.nightshift/`:
 
 ## Features
 
+<table>
+<tr>
+<td width="50%">
+
 ### ✅ Implemented (MVP)
-- **Intelligent Task Planning**: Claude analyzes requests and selects appropriate MCP tools
-- **Staged Approval Workflow**: Review tasks before execution (prevents hallucinations)
-- **Plan Revision**: Request changes to task plans with feedback before execution
-- **MCP Tool Integration**: Leverages ArXiv, Gemini, and other MCP servers
-- **File Change Tracking**: Monitors which files were created/modified during execution
-- **Rich Notifications**: Detailed completion summaries with file changes
-- **CLI Interface**: Simple commands for task management
-- **Persistent Storage**: SQLite database, centralized data directory
-- **Token & Time Tracking**: Monitors resource usage per task
+
+- 🧠 **Intelligent Task Planning**
+  Claude analyzes requests and selects appropriate MCP tools
+
+- 🔒 **Staged Approval Workflow**
+  Review tasks before execution (prevents hallucinations)
+
+- ✏️ **Plan Revision**
+  Request changes to task plans with feedback before execution
+
+- 🔧 **MCP Tool Integration**
+  Leverages ArXiv, Gemini, and other MCP servers
+
+- 📁 **File Change Tracking**
+  Monitors which files were created/modified during execution
+
+- 🔔 **Rich Notifications**
+  Detailed completion summaries with file changes
+
+- 💻 **CLI Interface**
+  Simple commands for task management
+
+- 💾 **Persistent Storage**
+  SQLite database, centralized data directory
+
+- 📊 **Token & Time Tracking**
+  Monitors resource usage per task
+
+</td>
+<td width="50%">
 
 ### 🚧 Planned (Future)
-- Slack/WhatsApp integration for notifications
-- Asynchronous task execution (background processing)
-- Multi-user support
-- Resource limits and auto-kill for runaway tasks
-- RAG-based context awareness (documentation search)
-- Knowledge base for correcting errors
-- More task types: data analysis, code maintenance, environment setup
+
+- 📱 Slack/WhatsApp integration for notifications
+
+- ⚡ Asynchronous task execution (background processing)
+
+- 👥 Multi-user support
+
+- 🛡️ Resource limits and auto-kill for runaway tasks
+
+- 🔍 RAG-based context awareness (documentation search)
+
+- 📚 Knowledge base for correcting errors
+
+- 🎯 More task types:
+  - Data analysis
+  - Code maintenance
+  - Environment setup
+
+</td>
+</tr>
+</table>
 
 ## Installation
 
@@ -92,7 +146,11 @@ pip install -e .
 
 ## Usage
 
-### Submit a task
+### Quick Start
+
+<details>
+<summary><b>📝 Submit a task</b></summary>
+
 ```bash
 # Submit and wait for approval
 nightshift submit "Download and summarize arxiv paper 2510.13997 using Gemini"
@@ -100,8 +158,11 @@ nightshift submit "Download and summarize arxiv paper 2510.13997 using Gemini"
 # Auto-approve and execute immediately
 nightshift submit "Download arxiv paper 2510.13997" --auto-approve
 ```
+</details>
 
-### View task queue
+<details>
+<summary><b>📋 View task queue</b></summary>
+
 ```bash
 # View all tasks
 nightshift queue
@@ -110,13 +171,19 @@ nightshift queue
 nightshift queue --status staged
 nightshift queue --status completed
 ```
+</details>
 
-### Approve and execute
+<details>
+<summary><b>✅ Approve and execute</b></summary>
+
 ```bash
 nightshift approve task_3acf60c6
 ```
+</details>
 
-### Revise a plan
+<details>
+<summary><b>✏️ Revise a plan</b></summary>
+
 ```bash
 # Request changes to a staged task plan
 nightshift revise task_3acf60c6 "Use Claude instead of Gemini for summarization"
@@ -124,8 +191,11 @@ nightshift revise task_3acf60c6 "Use Claude instead of Gemini for summarization"
 # Revise again with more feedback
 nightshift revise task_3acf60c6 "Also save the summary as a PDF file"
 ```
+</details>
 
-### View results
+<details>
+<summary><b>📊 View results</b></summary>
+
 ```bash
 # Basic info
 nightshift results task_3acf60c6
@@ -133,13 +203,19 @@ nightshift results task_3acf60c6
 # Show full output
 nightshift results task_3acf60c6 --show-output
 ```
+</details>
 
-### Cancel a task
+<details>
+<summary><b>❌ Cancel a task</b></summary>
+
 ```bash
 nightshift cancel task_3acf60c6
 ```
+</details>
 
-### Clear all data
+<details>
+<summary><b>🗑️ Clear all data</b></summary>
+
 ```bash
 # With confirmation
 nightshift clear
@@ -147,10 +223,13 @@ nightshift clear
 # Skip confirmation
 nightshift clear --confirm
 ```
+</details>
+
+---
 
 ## Example Workflows
 
-### Research Paper Analysis
+### 📄 Research Paper Analysis
 
 ```bash
 $ nightshift submit "Download arxiv paper 2510.13997 and summarize using Gemini"
@@ -195,7 +274,7 @@ Execution time: 122.9s
 ════════════════════════════════════════════════════════════════════════════
 ```
 
-### Code Repository Management
+### 🔧 Code Repository Management
 
 ```bash
 $ nightshift submit "Download the mcp-handley-lab repository from the handley-lab GitHub organization and create a pull request addressing issue #50"
@@ -247,7 +326,7 @@ Execution time: 98.3s
 ════════════════════════════════════════════════════════════════════════════
 ```
 
-### Plan Revision Workflow
+### ✏️ Plan Revision Workflow
 
 ```bash
 $ nightshift submit "Analyze the latest trends in quantum computing"
@@ -293,10 +372,24 @@ $ nightshift approve task_9b4e2c1a
 ✓ Task completed successfully!
 ```
 
+---
+
 ## Development Notes
 
-- Task planner uses `claude -p` with `--json-schema` to ensure structured output
-- Executor uses `claude -p` with `--verbose --output-format stream-json`
-- File tracking takes snapshots before/after execution
-- No timeout by default during development (can be added later)
-- All Claude calls are subprocess executions (no SDK)
+> **Technical Details**
+
+- 🎯 Task planner uses `claude -p` with `--json-schema` to ensure structured output
+- ⚙️ Executor uses `claude -p` with `--verbose --output-format stream-json`
+- 📸 File tracking takes snapshots before/after execution
+- ⏱️ No timeout by default during development (can be added later)
+- 🔌 All Claude calls are subprocess executions (no SDK)
+
+---
+
+<div align="center">
+
+**Built with Claude Code** • **Powered by MCP**
+
+Made with ❤️ for researchers and developers
+
+</div>
