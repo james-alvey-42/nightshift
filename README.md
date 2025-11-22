@@ -66,6 +66,7 @@ All NightShift data is stored in `~/.nightshift/`:
 ### ✅ Implemented (MVP)
 - **Intelligent Task Planning**: Claude analyzes requests and selects appropriate MCP tools
 - **Staged Approval Workflow**: Review tasks before execution (prevents hallucinations)
+- **Plan Revision**: Request changes to task plans with feedback before execution
 - **MCP Tool Integration**: Leverages ArXiv, Gemini, and other MCP servers
 - **File Change Tracking**: Monitors which files were created/modified during execution
 - **Rich Notifications**: Detailed completion summaries with file changes
@@ -115,6 +116,15 @@ nightshift queue --status completed
 nightshift approve task_3acf60c6
 ```
 
+### Revise a plan
+```bash
+# Request changes to a staged task plan
+nightshift revise task_3acf60c6 "Use Claude instead of Gemini for summarization"
+
+# Revise again with more feedback
+nightshift revise task_3acf60c6 "Also save the summary as a PDF file"
+```
+
 ### View results
 ```bash
 # Basic info
@@ -155,6 +165,7 @@ Planning task...
 
 ⏸  Status: STAGED (waiting for approval)
 Run 'nightshift approve task_3acf60c6' to execute
+Or 'nightshift revise task_3acf60c6 "feedback"' to request changes
 
 $ nightshift approve task_3acf60c6
 
@@ -234,6 +245,52 @@ Execution time: 98.3s
 
 **Pull Request:** https://github.com/handley-lab/mcp-handley-lab/pull/123
 ════════════════════════════════════════════════════════════════════════════
+```
+
+### Plan Revision Workflow
+
+```bash
+$ nightshift submit "Analyze the latest trends in quantum computing"
+
+Planning task...
+✓ Task created: task_9b4e2c1a
+
+╭─────────────────────────────── Task Plan ───────────────────────────────╮
+│ Enhanced prompt: Search for and analyze recent quantum computing papers │
+│ Tools needed: WebSearch, Write                                          │
+│ Estimated: ~1500 tokens, ~60s                                           │
+│ Reasoning: Use web search to find trends, compile analysis              │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+⏸  Status: STAGED (waiting for approval)
+Run 'nightshift approve task_9b4e2c1a' to execute
+Or 'nightshift revise task_9b4e2c1a "feedback"' to request changes
+
+$ nightshift revise task_9b4e2c1a "Focus on arxiv papers from 2024, not web search"
+
+Revising plan based on feedback...
+✓ Plan revised: task_9b4e2c1a
+
+╭─────────────────────────────── Revised Plan ────────────────────────────╮
+│ Revised prompt: Search arxiv for quantum computing papers from 2024... │
+│ Tools needed: mcp__arxiv__search, Read, mcp__gemini__ask, Write        │
+│ Estimated: ~2500 tokens, ~120s                                          │
+│ Changes: Switched from WebSearch to ArXiv tools, added Gemini for      │
+│          analysis, increased time estimate for paper processing         │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+Status: STAGED (waiting for approval)
+Run 'nightshift approve task_9b4e2c1a' to execute
+Or 'nightshift revise task_9b4e2c1a "more feedback"' to revise again
+
+$ nightshift approve task_9b4e2c1a
+
+✓ Task approved: task_9b4e2c1a
+▶ Executing...
+
+[... execution with revised plan ...]
+
+✓ Task completed successfully!
 ```
 
 ## Development Notes

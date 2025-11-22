@@ -247,6 +247,45 @@ class TaskQueue:
             conn.commit()
             return cursor.rowcount > 0
 
+    def update_plan(
+        self,
+        task_id: str,
+        description: str,
+        allowed_tools: Optional[List[str]] = None,
+        system_prompt: Optional[str] = None,
+        estimated_tokens: Optional[int] = None,
+        estimated_time: Optional[int] = None
+    ) -> bool:
+        """
+        Update task plan details (for plan revision)
+        Only allows updates on tasks in STAGED state
+        """
+        now = datetime.now().isoformat()
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """UPDATE tasks SET
+                    description = ?,
+                    allowed_tools = ?,
+                    system_prompt = ?,
+                    estimated_tokens = ?,
+                    estimated_time = ?,
+                    updated_at = ?
+                WHERE task_id = ? AND status = ?""",
+                (
+                    description,
+                    json.dumps(allowed_tools) if allowed_tools else None,
+                    system_prompt,
+                    estimated_tokens,
+                    estimated_time,
+                    now,
+                    task_id,
+                    TaskStatus.STAGED.value
+                )
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def add_log(self, task_id: str, log_level: str, message: str):
         """Add a log entry for a task"""
         with sqlite3.connect(self.db_path) as conn:
