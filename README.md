@@ -89,6 +89,22 @@ cd nightshift
 pip install -e .
 ```
 
+### Shell Completion (Optional)
+
+NightShift supports tab-completion for bash and zsh shells. See [completions/README.md](completions/README.md) for installation instructions.
+
+**Quick setup:**
+
+```bash
+# Bash
+echo 'eval "$(_NIGHTSHIFT_COMPLETE=bash_source nightshift)"' >> ~/.bashrc
+source ~/.bashrc
+
+# Zsh
+echo 'eval "$(_NIGHTSHIFT_COMPLETE=zsh_source nightshift)"' >> ~/.zshrc
+source ~/.zshrc
+```
+
 ## Usage
 
 ### Submit a task
