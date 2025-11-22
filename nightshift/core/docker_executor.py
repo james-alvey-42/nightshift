@@ -3,6 +3,8 @@ Docker Executor - Runs Claude Code in isolated containers
 Wraps Claude CLI execution in Docker for security and isolation
 """
 import os
+import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -12,6 +14,49 @@ from .mcp_discovery import discover_mcp_mount_paths
 
 class DockerExecutor:
     """Executes Claude Code in isolated Docker containers"""
+
+    @staticmethod
+    def _ensure_absolute_mcp_paths(config_path: Path) -> None:
+        """
+        Rewrite MCP server commands to use absolute paths
+
+        This ensures MCP servers can be spawned inside containers where
+        PATH resolution may differ from the host environment.
+
+        Args:
+            config_path: Path to .claude.json config file
+        """
+        if not config_path.exists():
+            return
+
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+
+            servers = config.get("mcpServers", {})
+            modified = False
+
+            for name, server_config in servers.items():
+                cmd = server_config.get("command")
+                if not cmd or "/" in cmd:
+                    # Already absolute or empty
+                    continue
+
+                # Resolve command to absolute path
+                abs_path = shutil.which(cmd)
+                if abs_path:
+                    server_config["command"] = abs_path
+                    modified = True
+
+            # Write back if we made changes
+            if modified:
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=2)
+
+        except (json.JSONDecodeError, IOError) as e:
+            # Don't fail if config is malformed, just skip normalization
+            import sys
+            print(f"Warning: Could not normalize MCP paths in {config_path}: {e}", file=sys.stderr)
 
     def __init__(
         self,
@@ -30,6 +75,10 @@ class DockerExecutor:
         self.image_name = image_name
         self.working_dir = Path(working_dir) if working_dir else Path.cwd()
         self.claude_config_dir = Path(claude_config_dir) if claude_config_dir else Path.home() / ".claude"
+
+        # Ensure MCP commands use absolute paths for container compatibility
+        claude_json = Path.home() / ".claude.json"
+        self._ensure_absolute_mcp_paths(claude_json)
 
     def build_docker_command(
         self,
