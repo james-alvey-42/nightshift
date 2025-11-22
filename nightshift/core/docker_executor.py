@@ -47,7 +47,6 @@ class DockerExecutor:
         cmd = [
             "docker", "run",
             "--rm",  # Remove container after execution
-            "-i",    # Interactive (for stdin if needed)
         ]
 
         # User mapping for file permissions
