@@ -22,6 +22,63 @@ from ..core.config import Config
 console = Console()
 
 
+def complete_task_id(ctx, param, incomplete):
+    """
+    Custom completion function for task IDs.
+    Returns task IDs that match the incomplete string.
+    """
+    try:
+        # Initialize config and task queue
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get all tasks
+        tasks = task_queue.list_tasks()
+
+        # Filter by incomplete prefix and return matching task IDs
+        return [task.task_id for task in tasks if task.task_id.startswith(incomplete)]
+    except Exception:
+        # If anything fails, return empty list (graceful degradation)
+        return []
+
+
+def complete_staged_task_id(ctx, param, incomplete):
+    """
+    Custom completion function for staged task IDs.
+    Returns only staged task IDs for the approve command.
+    """
+    try:
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get only staged tasks
+        tasks = task_queue.list_tasks(TaskStatus.STAGED)
+
+        return [task.task_id for task in tasks if task.task_id.startswith(incomplete)]
+    except Exception:
+        return []
+
+
+def complete_cancellable_task_id(ctx, param, incomplete):
+    """
+    Custom completion function for cancellable task IDs.
+    Returns staged or committed task IDs for the cancel command.
+    """
+    try:
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get staged and committed tasks
+        staged_tasks = task_queue.list_tasks(TaskStatus.STAGED)
+        committed_tasks = task_queue.list_tasks(TaskStatus.COMMITTED)
+
+        all_tasks = staged_tasks + committed_tasks
+
+        return [task.task_id for task in all_tasks if task.task_id.startswith(incomplete)]
+    except Exception:
+        return []
+
+
 @click.group()
 @click.pass_context
 def cli(ctx):
@@ -171,7 +228,7 @@ def queue(ctx, status):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_staged_task_id)
 @click.pass_context
 def approve(ctx, task_id):
     """Approve and execute a staged task"""
@@ -208,7 +265,7 @@ def approve(ctx, task_id):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_task_id)
 @click.option('--show-output', is_flag=True, help='Display full output')
 @click.pass_context
 def results(ctx, task_id, show_output):
@@ -253,10 +310,10 @@ def results(ctx, task_id, show_output):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_cancellable_task_id)
 @click.pass_context
 def cancel(ctx, task_id):
-    """Cancel a staged task"""
+    """Cancel a staged or committed task"""
     task_queue = ctx.obj['task_queue']
 
     task = task_queue.get_task(task_id)

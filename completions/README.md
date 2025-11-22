@@ -7,6 +7,10 @@ This directory contains shell completion scripts for the `nightshift` command-li
 - **Command completion**: Tab-complete all nightshift commands (`submit`, `queue`, `approve`, `results`, `cancel`, `clear`)
 - **Option completion**: Tab-complete command options and flags (e.g., `--auto-approve`, `--status`, `--show-output`, `--confirm`)
 - **Dynamic completion**: Context-aware completion for command arguments
+- **Task ID completion**: Smart autocompletion of task IDs based on command context
+  - `approve` command: Shows only staged tasks
+  - `results` command: Shows all tasks
+  - `cancel` command: Shows only staged or committed tasks
 - **Help text**: View command descriptions while completing (zsh only)
 
 ## Supported Shells
@@ -129,6 +133,26 @@ nightshift clear --<TAB>
 nightshift queue --status <TAB>
 # Shows: staged committed running completed failed cancelled
 ```
+
+### Task ID Completion
+
+The shell completion intelligently suggests task IDs based on the command context:
+
+```bash
+# Approve command - shows only STAGED tasks
+nightshift approve <TAB>
+# Shows: task_abc123 task_def456 (only staged tasks)
+
+# Results command - shows ALL tasks
+nightshift results <TAB>
+# Shows: task_abc123 task_def456 task_xyz789 (all tasks)
+
+# Cancel command - shows only STAGED or COMMITTED tasks
+nightshift cancel <TAB>
+# Shows: task_abc123 task_def456 (staged or committed tasks)
+```
+
+Task IDs are fetched dynamically from your NightShift database, so the completions always reflect your current task queue state.
 
 ### Command Help
 
