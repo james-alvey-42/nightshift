@@ -40,6 +40,9 @@ class Task:
     error_message: Optional[str] = None
     token_usage: Optional[int] = None
     execution_time: Optional[float] = None  # seconds
+    execution_environment: Optional[Dict[str, Any]] = None  # execution environment details
+    software_stack: Optional[Dict[str, Any]] = None  # software stack requirements
+    containerization: Optional[Dict[str, Any]] = None  # containerization recommendations
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -74,7 +77,10 @@ class TaskQueue:
                     result_path TEXT,
                     error_message TEXT,
                     token_usage INTEGER,
-                    execution_time REAL
+                    execution_time REAL,
+                    execution_environment TEXT,  -- JSON object
+                    software_stack TEXT,  -- JSON object
+                    containerization TEXT  -- JSON object
                 )
             """)
 
@@ -89,6 +95,17 @@ class TaskQueue:
                 )
             """)
 
+            # Migration: Add new columns if they don't exist
+            cursor = conn.execute("PRAGMA table_info(tasks)")
+            columns = [row[1] for row in cursor.fetchall()]
+
+            if 'execution_environment' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN execution_environment TEXT")
+            if 'software_stack' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN software_stack TEXT")
+            if 'containerization' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN containerization TEXT")
+
             conn.commit()
 
     def create_task(
@@ -99,7 +116,10 @@ class TaskQueue:
         allowed_tools: Optional[List[str]] = None,
         system_prompt: Optional[str] = None,
         estimated_tokens: Optional[int] = None,
-        estimated_time: Optional[int] = None
+        estimated_time: Optional[int] = None,
+        execution_environment: Optional[Dict[str, Any]] = None,
+        software_stack: Optional[Dict[str, Any]] = None,
+        containerization: Optional[Dict[str, Any]] = None
     ) -> Task:
         """Create a new task in STAGED state"""
         now = datetime.now().isoformat()
@@ -113,6 +133,9 @@ class TaskQueue:
             system_prompt=system_prompt,
             estimated_tokens=estimated_tokens,
             estimated_time=estimated_time,
+            execution_environment=execution_environment,
+            software_stack=software_stack,
+            containerization=containerization,
             created_at=now,
             updated_at=now
         )
@@ -122,8 +145,9 @@ class TaskQueue:
                 INSERT INTO tasks (
                     task_id, description, status, skill_name, allowed_tools,
                     system_prompt, estimated_tokens, estimated_time,
+                    execution_environment, software_stack, containerization,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
                 task.description,
@@ -133,6 +157,9 @@ class TaskQueue:
                 task.system_prompt,
                 task.estimated_tokens,
                 task.estimated_time,
+                json.dumps(task.execution_environment) if task.execution_environment else None,
+                json.dumps(task.software_stack) if task.software_stack else None,
+                json.dumps(task.containerization) if task.containerization else None,
                 task.created_at,
                 task.updated_at
             ))
@@ -169,7 +196,10 @@ class TaskQueue:
                 result_path=row["result_path"],
                 error_message=row["error_message"],
                 token_usage=row["token_usage"],
-                execution_time=row["execution_time"]
+                execution_time=row["execution_time"],
+                execution_environment=json.loads(row["execution_environment"]) if row.get("execution_environment") else None,
+                software_stack=json.loads(row["software_stack"]) if row.get("software_stack") else None,
+                containerization=json.loads(row["containerization"]) if row.get("containerization") else None
             )
 
     def list_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
@@ -205,7 +235,10 @@ class TaskQueue:
                     result_path=row["result_path"],
                     error_message=row["error_message"],
                     token_usage=row["token_usage"],
-                    execution_time=row["execution_time"]
+                    execution_time=row["execution_time"],
+                    execution_environment=json.loads(row["execution_environment"]) if row.get("execution_environment") else None,
+                    software_stack=json.loads(row["software_stack"]) if row.get("software_stack") else None,
+                    containerization=json.loads(row["containerization"]) if row.get("containerization") else None
                 ))
 
             return tasks
@@ -254,7 +287,10 @@ class TaskQueue:
         allowed_tools: Optional[List[str]] = None,
         system_prompt: Optional[str] = None,
         estimated_tokens: Optional[int] = None,
-        estimated_time: Optional[int] = None
+        estimated_time: Optional[int] = None,
+        execution_environment: Optional[Dict[str, Any]] = None,
+        software_stack: Optional[Dict[str, Any]] = None,
+        containerization: Optional[Dict[str, Any]] = None
     ) -> bool:
         """
         Update task plan details (for plan revision)
@@ -270,6 +306,9 @@ class TaskQueue:
                     system_prompt = ?,
                     estimated_tokens = ?,
                     estimated_time = ?,
+                    execution_environment = ?,
+                    software_stack = ?,
+                    containerization = ?,
                     updated_at = ?
                 WHERE task_id = ? AND status = ?""",
                 (
@@ -278,6 +317,9 @@ class TaskQueue:
                     system_prompt,
                     estimated_tokens,
                     estimated_time,
+                    json.dumps(execution_environment) if execution_environment else None,
+                    json.dumps(software_stack) if software_stack else None,
+                    json.dumps(containerization) if containerization else None,
                     now,
                     task_id,
                     TaskStatus.STAGED.value
