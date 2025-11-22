@@ -106,6 +106,15 @@ class DockerExecutor:
         cmd.extend(["-u", f"{uid}:{gid}"])
 
         # Volume mounts
+        # Mount system directories for interpreters (Python, Node, etc.)
+        # MCP server venvs have symlinks pointing to system interpreters
+        # Also mount /opt for Claude installation
+        system_dirs = ["/usr", "/lib", "/lib64", "/opt"]
+        for sys_dir in system_dirs:
+            sys_path = Path(sys_dir)
+            if sys_path.exists():
+                cmd.extend(["-v", f"{sys_dir}:{sys_dir}:ro"])
+
         # Auto-discover and mount MCP server paths (read-only)
         # This mounts venvs, npm globals, etc. at the same paths to preserve shebangs
         try:

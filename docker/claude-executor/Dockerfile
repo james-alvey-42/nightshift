@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    python3.13 \
+    python3.13-venv \
+    python3-pip \
     # Playwright dependencies (for mcp__playwright__)
     libnss3 \
     libatk1.0-0 \
