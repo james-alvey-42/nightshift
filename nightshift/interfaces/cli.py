@@ -110,7 +110,8 @@ def submit(ctx, description, auto_approve):
                 console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}")
         else:
             console.print(f"\n[dim]⏸  Status:[/dim] STAGED (waiting for approval)")
-            console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]\n")
+            console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
+            console.print(f"[dim]Or 'nightshift revise {task_id} \"feedback\"' to request changes[/dim]\n")
 
     except Exception as e:
         console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
@@ -250,6 +251,81 @@ def results(ctx, task_id, show_output):
             console.print(f"[red]Failed to read output: {e}[/red]")
 
     console.print()
+
+
+@cli.command()
+@click.argument('task_id')
+@click.argument('feedback')
+@click.pass_context
+def revise(ctx, task_id, feedback):
+    """Request plan revision with feedback for a staged task"""
+    logger = ctx.obj['logger']
+    task_queue = ctx.obj['task_queue']
+    task_planner = ctx.obj['task_planner']
+
+    # Get task
+    task = task_queue.get_task(task_id)
+    if not task:
+        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} not found\n")
+        raise click.Abort()
+
+    if task.status != TaskStatus.STAGED.value:
+        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} is not in STAGED state (current: {task.status})\n")
+        console.print(f"[dim]Only staged tasks can be revised[/dim]\n")
+        raise click.Abort()
+
+    console.print(f"\n[bold blue]Revising plan based on feedback...[/bold blue]")
+
+    try:
+        # Build current plan from task
+        current_plan = {
+            'enhanced_prompt': task.description,
+            'allowed_tools': task.allowed_tools or [],
+            'system_prompt': task.system_prompt or '',
+            'estimated_tokens': task.estimated_tokens or 0,
+            'estimated_time': task.estimated_time or 0
+        }
+
+        # Use Claude to refine the plan
+        revised_plan = task_planner.refine_plan(current_plan, feedback)
+
+        # Update task with revised plan
+        success = task_queue.update_plan(
+            task_id=task_id,
+            description=revised_plan['enhanced_prompt'],
+            allowed_tools=revised_plan['allowed_tools'],
+            system_prompt=revised_plan['system_prompt'],
+            estimated_tokens=revised_plan['estimated_tokens'],
+            estimated_time=revised_plan['estimated_time']
+        )
+
+        if not success:
+            console.print(f"\n[bold red]Error:[/bold red] Failed to update task plan\n")
+            raise click.Abort()
+
+        task_queue.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
+
+        # Display revised plan
+        console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
+
+        panel = Panel.fit(
+            f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
+            f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
+            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
+            f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
+            title=f"Revised Plan: {task_id}",
+            border_style="green"
+        )
+        console.print(panel)
+
+        console.print(f"\n[dim]Status:[/dim] STAGED (waiting for approval)")
+        console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
+        console.print(f"[dim]Or 'nightshift revise {task_id} \"more feedback\"' to revise again[/dim]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        logger.error(f"Plan revision failed for {task_id}: {str(e)}")
+        raise click.Abort()
 
 
 @cli.command()

@@ -178,6 +178,135 @@ Guidelines:
             self.logger.error(f"Task planning failed: {str(e)}")
             raise
 
+    def refine_plan(self, current_plan: Dict[str, Any], feedback: str) -> Dict[str, Any]:
+        """
+        Refine an existing plan based on user feedback
+
+        Args:
+            current_plan: The current plan dictionary
+            feedback: User's feedback about what needs to change
+
+        Returns:
+            Dict with same structure as plan_task()
+        """
+
+        refinement_prompt = f"""You are a task planning agent for NightShift, an automated research assistant system.
+
+A user has reviewed a task plan and requested changes. Your job is to refine the plan based on their feedback.
+
+CURRENT PLAN:
+Enhanced Prompt: {current_plan.get('enhanced_prompt', 'N/A')}
+Allowed Tools: {', '.join(current_plan.get('allowed_tools', []))}
+System Prompt: {current_plan.get('system_prompt', 'N/A')}
+Estimated Tokens: {current_plan.get('estimated_tokens', 0)}
+Estimated Time: {current_plan.get('estimated_time', 0)}s
+
+USER FEEDBACK:
+{feedback}
+
+AVAILABLE TOOLS:
+{self.tools_reference}
+
+Based on the user's feedback, create a REVISED plan. Respond with ONLY a JSON object (no other text) with this structure:
+{{
+    "enhanced_prompt": "The revised detailed prompt for the executor agent",
+    "allowed_tools": ["tool1", "tool2", ...],
+    "system_prompt": "Revised system prompt for the executor",
+    "estimated_tokens": 1000,
+    "estimated_time": 60,
+    "reasoning": "Brief explanation of how the feedback was incorporated"
+}}
+
+Guidelines:
+- Address the specific concerns raised in the user feedback
+- Maintain the overall task objectives unless feedback suggests otherwise
+- Adjust tool selection if the user requests different capabilities
+- Update estimates based on scope changes
+- Explain what changed in the reasoning field
+"""
+
+        try:
+            # Call Claude in headless mode for plan refinement
+            json_schema = json.dumps({
+                "type": "object",
+                "properties": {
+                    "enhanced_prompt": {"type": "string"},
+                    "allowed_tools": {"type": "array", "items": {"type": "string"}},
+                    "system_prompt": {"type": "string"},
+                    "estimated_tokens": {"type": "integer"},
+                    "estimated_time": {"type": "integer"},
+                    "reasoning": {"type": "string"}
+                },
+                "required": ["enhanced_prompt", "allowed_tools", "system_prompt",
+                             "estimated_tokens", "estimated_time"]
+            })
+
+            cmd = [
+                self.claude_bin,
+                "-p",
+                refinement_prompt,
+                "--output-format", "json",
+                "--json-schema", json_schema
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode != 0:
+                self.logger.error(f"Plan refinement failed with return code {result.returncode}")
+                self.logger.error(f"STDERR: {result.stderr}")
+                raise Exception(f"Plan refinement failed: {result.stderr}")
+
+            # Parse the wrapper JSON
+            wrapper = json.loads(result.stdout)
+
+            # Extract the actual result from the wrapper
+            if "result" in wrapper:
+                result_text = wrapper["result"]
+
+                # Remove markdown code fences if present
+                if result_text.startswith("```json"):
+                    result_text = result_text.replace("```json\n", "", 1)
+                    result_text = result_text.rsplit("```", 1)[0]
+                elif result_text.startswith("```"):
+                    result_text = result_text.replace("```\n", "", 1)
+                    result_text = result_text.rsplit("```", 1)[0]
+
+                result_text = result_text.strip()
+                refined_plan = json.loads(result_text)
+            else:
+                refined_plan = wrapper
+
+            # Validate required fields
+            required_fields = ["enhanced_prompt", "allowed_tools", "system_prompt",
+                             "estimated_tokens", "estimated_time"]
+            for field in required_fields:
+                if field not in refined_plan:
+                    raise Exception(f"Refined plan missing field: {field}")
+
+            self.logger.debug(f"Plan refined: {refined_plan.get('reasoning', 'N/A')}")
+            self.logger.debug(f"Tools adjusted to: {', '.join(refined_plan['allowed_tools'])}")
+
+            return refined_plan
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("Plan refinement timed out")
+            raise Exception("Plan refinement took too long")
+
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse refinement response as JSON: {e}")
+            self.logger.error(f"Full response was:")
+            self.logger.error(result.stdout)
+            raise Exception("Refinement response was not valid JSON")
+
+        except Exception as e:
+            self.logger.error(f"Plan refinement failed: {str(e)}")
+            raise
+
     def quick_estimate(self, description: str) -> Dict[str, int]:
         """
         Fallback quick estimation without calling Claude
