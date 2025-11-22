@@ -1,5 +1,7 @@
 # NightShift - Automated Research Assistant System
 
+![NightShift Logo](assets/logo.png)
+
 An AI-driven agent manager for scientific research automation, powered by Claude Code's headless mode and MCP tools.
 
 ## Status: ✅ MVP Complete
