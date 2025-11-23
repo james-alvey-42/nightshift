@@ -47,6 +47,10 @@ class Config:
 
         self.tools_reference_path = self.config_dir / "claude-code-tools-reference.md"
 
+        # Docker execution settings
+        self.use_docker = os.environ.get("NIGHTSHIFT_USE_DOCKER", "false").lower() == "true"
+        self.docker_image = os.environ.get("NIGHTSHIFT_DOCKER_IMAGE", "nightshift-claude-executor:latest")
+
     def get_log_dir(self) -> Path:
         """Get logs directory"""
         return self.logs_dir

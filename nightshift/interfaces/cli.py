@@ -22,6 +22,16 @@ from ..core.config import Config
 console = Console()
 
 
+def _normalize_host_path(raw_path: str) -> str:
+    """Return an absolute host path string for mount storage."""
+    expanded = Path(raw_path).expanduser()
+    try:
+        return str(expanded.resolve(strict=False))
+    except Exception:
+        # Fallback to absolute path if resolution fails
+        return str(expanded.absolute())
+
+
 @click.group()
 @click.pass_context
 def cli(ctx):
@@ -43,7 +53,9 @@ def cli(ctx):
     ctx.obj['agent_manager'] = AgentManager(
         ctx.obj['task_queue'],
         ctx.obj['logger'],
-        output_dir=str(config.get_output_dir())
+        output_dir=str(config.get_output_dir()),
+        use_docker=config.use_docker,
+        docker_image=config.docker_image
     )
 
 
@@ -51,8 +63,12 @@ def cli(ctx):
 @click.argument('description')
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
+@click.option('--mount', '-m', multiple=True,
+              help='Additional directory to mount in container (Docker mode only). '
+                   'Format: /host/path or /host/path:/container/path:mode (mode=ro|rw, default:ro). '
+                   'Can be specified multiple times.')
 @click.pass_context
-def submit(ctx, description, auto_approve, planning_timeout):
+def submit(ctx, description, auto_approve, planning_timeout, mount):
     """Submit a new task"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -60,6 +76,42 @@ def submit(ctx, description, auto_approve, planning_timeout):
     agent_manager = ctx.obj['agent_manager']
 
     console.print(f"\n[bold blue]Planning task...[/bold blue]")
+
+    # Parse mount specifications
+    additional_mounts = []
+    if mount:
+        for mount_spec in mount:
+            parts = mount_spec.split(':')
+            host_path = _normalize_host_path(parts[0])
+            if len(parts) == 1:
+                # Just host path, use as-is with readonly
+                additional_mounts.append({
+                    "host_path": host_path,
+                    "mode": "ro"
+                })
+            elif len(parts) == 2:
+                # host_path:container_path or host_path:mode
+                if parts[1] in ["ro", "rw"]:
+                    additional_mounts.append({
+                        "host_path": host_path,
+                        "mode": parts[1]
+                    })
+                else:
+                    additional_mounts.append({
+                        "host_path": host_path,
+                        "container_path": parts[1],
+                        "mode": "ro"
+                    })
+            elif len(parts) == 3:
+                # host_path:container_path:mode
+                additional_mounts.append({
+                    "host_path": host_path,
+                    "container_path": parts[1],
+                    "mode": parts[2]
+                })
+            else:
+                console.print(f"[yellow]Warning: Ignoring invalid mount spec: {mount_spec}[/yellow]")
+                continue
 
     try:
         # Use Claude to plan the task
@@ -75,7 +127,8 @@ def submit(ctx, description, auto_approve, planning_timeout):
             allowed_tools=plan['allowed_tools'],
             system_prompt=plan['system_prompt'],
             estimated_tokens=plan['estimated_tokens'],
-            estimated_time=plan['estimated_time']
+            estimated_time=plan['estimated_time'],
+            additional_mounts=additional_mounts if additional_mounts else None
         )
 
         logger.log_task_created(task_id, description)

@@ -13,6 +13,18 @@ NightShift is an AI-driven research automation system that uses Claude Code in h
 pip install -e .
 ```
 
+### Containerized Execution Setup (Optional)
+```bash
+# Build Docker executor image
+./scripts/build-executor.sh
+
+# Enable containerized execution
+export NIGHTSHIFT_USE_DOCKER=true
+
+# Disable containerized execution
+unset NIGHTSHIFT_USE_DOCKER
+```
+
 ### Running NightShift
 ```bash
 # Submit task and wait for approval
@@ -20,6 +32,9 @@ nightshift submit "task description"
 
 # Auto-approve and execute immediately
 nightshift submit "task description" --auto-approve
+
+# Run with Docker execution (alternative to env var)
+NIGHTSHIFT_USE_DOCKER=true nightshift submit "task description" --auto-approve
 
 # View task queue
 nightshift queue
@@ -51,13 +66,17 @@ NightShift uses a two-agent architecture:
 
 ### Key Components
 
-- **TaskQueue** (nightshift/core/task_queue.py): SQLite-backed persistence with task lifecycle states (STAGED → COMMITTED → RUNNING → COMPLETED/FAILED)
+- **TaskQueue** (nightshift/core/task_queue.py): SQLite-backed persistence with task lifecycle states (STAGED → COMMITTED → RUNNING → COMPLETED/FAILED). Tasks can include `additional_mounts` field for Docker execution.
 
 - **FileTracker** (nightshift/core/file_tracker.py): Takes before/after snapshots of the working directory to detect created/modified files during execution
 
-- **AgentManager** (nightshift/core/agent_manager.py): Orchestrates Claude CLI subprocess execution, parses stream-json output, and manages file tracking
+- **AgentManager** (nightshift/core/agent_manager.py): Orchestrates Claude CLI subprocess execution, parses stream-json output, and manages file tracking. Supports both native and Docker execution modes.
 
 - **TaskPlanner** (nightshift/core/task_planner.py): Uses Claude with JSON schema enforcement to select MCP tools from nightshift/config/claude-code-tools-reference.md
+
+- **DockerExecutor** (nightshift/core/docker_executor.py): Wraps Claude CLI execution in isolated Docker containers with automatic MCP server path discovery and mounting
+
+- **MCPDiscovery** (nightshift/core/mcp_discovery.py): Auto-discovers MCP server installation paths by parsing `claude mcp list` output and resolving executables to determine what needs to be mounted in containers
 
 ### Data Storage
 
@@ -87,6 +106,39 @@ The stream-json format is parsed line-by-line to extract:
 - Token usage (key: "usage")
 - Tool calls (type: "tool_use")
 
+## Containerized Execution
+
+NightShift can run Claude Code tasks in isolated Docker containers when `NIGHTSHIFT_USE_DOCKER=true` is set. This provides security isolation and sandboxing.
+
+### How It Works
+
+- AgentManager detects the environment variable and initializes DockerExecutor
+- DockerExecutor builds a `docker run` command that:
+  - Runs the container as read-only (`--read-only`) with tmpfs for `/tmp`
+  - Mounts system directories (`/usr`, `/lib`, `/lib64`, `/opt`) read-only for interpreters
+  - Auto-discovers and mounts MCP server paths (venvs, npm globals) via MCPDiscovery
+  - Mounts working directory as read-write at `/work`
+  - Mounts `.claude` config directory as read-write
+  - Creates temporary `.claude.json` with absolute MCP command paths (doesn't mutate user's config)
+  - Passes through API key environment variables
+
+### MCP Server Discovery
+
+MCPDiscovery (nightshift/core/mcp_discovery.py) automatically finds MCP server installation paths:
+1. Runs `claude mcp list` to get configured servers
+2. Resolves each command to absolute path via `which`
+3. Classifies executables (script with shebang, ELF binary, etc.)
+4. For Python scripts, walks up to find virtualenv root (`pyvenv.cfg`)
+5. For npm-based servers, discovers npm global prefix and root
+6. Only mounts user-controlled paths (not system directories)
+7. Returns minimal set of paths to mount for MCP servers to work in containers
+
+This ensures MCP tools work inside containers without manual mount configuration.
+
+### Building the Container
+
+Use `./scripts/build-executor.sh` to build the `nightshift-claude-executor:latest` image.
+
 ## Important Implementation Details
 
 - No timeouts are used during development (can be added via `timeout` parameter in `execute_task`)
@@ -95,6 +147,8 @@ The stream-json format is parsed line-by-line to extract:
 - All Claude interactions are subprocess executions, not SDK calls
 - The system does NOT use the Claude Agent SDK - it shells out to the `claude` CLI binary
 - Tool selection relies on the MCP tools reference document in nightshift/config/claude-code-tools-reference.md
+- AgentManager supports both native execution (shell=True) and Docker execution (DockerExecutor.execute)
+- Docker executor creates temporary config files to normalize MCP paths without mutating user's `.claude.json`
 
 ## Common Pitfalls
 
@@ -102,3 +156,8 @@ The stream-json format is parsed line-by-line to extract:
 - Stream-json output must be parsed line-by-line; not all lines are valid JSON (some are plain text)
 - File tracking snapshots are taken before/after execution, so files modified outside the working directory won't be detected
 - Task status transitions must follow the valid state machine: STAGED → COMMITTED → RUNNING → COMPLETED/FAILED
+- When using Docker execution, if MCP tools don't work, check that:
+  - The Docker image exists (`docker image inspect nightshift-claude-executor:latest`)
+  - `claude mcp list` shows the expected servers
+  - MCP server paths are user-controlled (not system paths like `/usr/bin`)
+- Docker executor uses user ID mapping (`-u uid:gid`) so files created in containers have correct ownership

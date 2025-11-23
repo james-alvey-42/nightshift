@@ -32,6 +32,7 @@ class Task:
     system_prompt: Optional[str] = None
     estimated_tokens: Optional[int] = None
     estimated_time: Optional[int] = None  # seconds
+    additional_mounts: Optional[List[Dict[str, str]]] = None  # Extra directories to mount in Docker
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -67,6 +68,7 @@ class TaskQueue:
                     system_prompt TEXT,
                     estimated_tokens INTEGER,
                     estimated_time INTEGER,
+                    additional_mounts TEXT,  -- JSON array of mount configs
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     started_at TEXT,
@@ -77,6 +79,13 @@ class TaskQueue:
                     execution_time REAL
                 )
             """)
+
+            # Migrate existing databases - add additional_mounts column if it doesn't exist
+            try:
+                conn.execute("ALTER TABLE tasks ADD COLUMN additional_mounts TEXT")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS task_logs (
@@ -99,7 +108,8 @@ class TaskQueue:
         allowed_tools: Optional[List[str]] = None,
         system_prompt: Optional[str] = None,
         estimated_tokens: Optional[int] = None,
-        estimated_time: Optional[int] = None
+        estimated_time: Optional[int] = None,
+        additional_mounts: Optional[List[Dict[str, str]]] = None
     ) -> Task:
         """Create a new task in STAGED state"""
         now = datetime.now().isoformat()
@@ -113,6 +123,7 @@ class TaskQueue:
             system_prompt=system_prompt,
             estimated_tokens=estimated_tokens,
             estimated_time=estimated_time,
+            additional_mounts=additional_mounts,
             created_at=now,
             updated_at=now
         )
@@ -121,9 +132,9 @@ class TaskQueue:
             conn.execute("""
                 INSERT INTO tasks (
                     task_id, description, status, skill_name, allowed_tools,
-                    system_prompt, estimated_tokens, estimated_time,
+                    system_prompt, estimated_tokens, estimated_time, additional_mounts,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
                 task.description,
@@ -133,6 +144,7 @@ class TaskQueue:
                 task.system_prompt,
                 task.estimated_tokens,
                 task.estimated_time,
+                json.dumps(task.additional_mounts) if task.additional_mounts else None,
                 task.created_at,
                 task.updated_at
             ))
@@ -153,6 +165,14 @@ class TaskQueue:
             if not row:
                 return None
 
+            # Handle additional_mounts column (may not exist in older databases)
+            additional_mounts = None
+            try:
+                if row["additional_mounts"]:
+                    additional_mounts = json.loads(row["additional_mounts"])
+            except (KeyError, IndexError):
+                pass
+
             return Task(
                 task_id=row["task_id"],
                 description=row["description"],
@@ -162,6 +182,7 @@ class TaskQueue:
                 system_prompt=row["system_prompt"],
                 estimated_tokens=row["estimated_tokens"],
                 estimated_time=row["estimated_time"],
+                additional_mounts=additional_mounts,
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 started_at=row["started_at"],
@@ -189,6 +210,14 @@ class TaskQueue:
 
             tasks = []
             for row in cursor.fetchall():
+                # Handle additional_mounts column (may not exist in older databases)
+                additional_mounts = None
+                try:
+                    if row["additional_mounts"]:
+                        additional_mounts = json.loads(row["additional_mounts"])
+                except (KeyError, IndexError):
+                    pass
+
                 tasks.append(Task(
                     task_id=row["task_id"],
                     description=row["description"],
@@ -198,6 +227,7 @@ class TaskQueue:
                     system_prompt=row["system_prompt"],
                     estimated_tokens=row["estimated_tokens"],
                     estimated_time=row["estimated_time"],
+                    additional_mounts=additional_mounts,
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     started_at=row["started_at"],

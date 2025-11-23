@@ -139,10 +139,51 @@ All NightShift data is stored in `~/.nightshift/`:
 
 ## Installation
 
+### Basic Installation
+
 ```bash
 cd nightshift
 pip install -e .
 ```
+
+### Containerized Execution (Recommended)
+
+For enhanced security and isolation, run Claude Code tasks in Docker containers:
+
+**Requirements:**
+- Docker installed and running
+- User added to docker group (or use sudo)
+
+**Setup:**
+
+```bash
+# 1. Build the executor container (includes Claude Code + MCP dependencies)
+./scripts/build-executor.sh
+
+# 2. Verify the build
+docker run --rm nightshift-claude-executor:latest --version
+
+# 3. Enable containerized execution
+export NIGHTSHIFT_USE_DOCKER=true
+
+# Or add to your shell profile for permanent use
+echo 'export NIGHTSHIFT_USE_DOCKER=true' >> ~/.bashrc
+```
+
+**How it works:**
+- NightShift runs natively on your host (manages database, queue, planning)
+- Each Claude Code task executes in a fresh, isolated Docker container
+- Working directory and `~/.claude` config are mounted into containers
+- All commands work exactly the same - Docker execution is transparent
+
+**Benefits:**
+- ✅ Task isolation and sandboxing
+- ✅ Enhanced security (reduced attack surface)
+- ✅ Resource limits (CPU/memory can be constrained)
+- ✅ Reproducible execution environments
+- ✅ Easy to disable (unset environment variable)
+
+See [docs/CONTAINERIZED_EXECUTION.md](docs/CONTAINERIZED_EXECUTION.md) for detailed documentation, troubleshooting, and advanced configuration.
 
 ## Usage
 
