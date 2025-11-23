@@ -175,8 +175,9 @@ class DockerExecutor:
         # Volume mounts
         # Mount system directories for interpreters (Python, Node, etc.)
         # MCP server venvs have symlinks pointing to system interpreters
-        # /opt is needed for Claude CLI installation (/opt/claude-code)
-        system_dirs = ["/usr", "/lib", "/lib64", "/opt"]
+        # Note: We don't mount /usr because Claude CLI is installed there in the container
+        # and mounting host's /usr would overwrite it
+        system_dirs = ["/lib", "/lib64", "/opt"]
         for sys_dir in system_dirs:
             sys_path = Path(sys_dir)
             if sys_path.exists():
@@ -243,9 +244,13 @@ class DockerExecutor:
         home_dir = str(Path.home())
         cmd.extend(["-e", f"HOME={home_dir}"])
 
-        # Set PATH to include venv binaries for MCP servers
-        venv_bin = f"{Path.home()}/.claude_venv/bin"
-        cmd.extend(["-e", f"PATH={venv_bin}:/usr/local/bin:/usr/bin:/bin"])
+        # Set PATH to include venv binaries for MCP servers (if exists)
+        venv_bin = Path.home() / ".claude_venv" / "bin"
+        if venv_bin.exists():
+            path_str = f"{venv_bin}:/usr/local/bin:/usr/bin:/bin"
+        else:
+            path_str = "/usr/local/bin:/usr/bin:/bin"
+        cmd.extend(["-e", f"PATH={path_str}"])
 
         # Environment variables for API keys
         if env_vars:

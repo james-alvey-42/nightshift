@@ -146,18 +146,64 @@ cd nightshift
 pip install -e .
 ```
 
-### Containerized Execution (Recommended)
+### Containerized Execution (Optional)
 
 For enhanced security and isolation, run Claude Code tasks in Docker containers:
 
-**Requirements:**
-- Docker installed and running
-- User added to docker group (or use sudo)
+#### Prerequisites
 
-**Setup:**
+**Docker Installation:**
+
+<details>
+<summary><b>macOS Installation</b></summary>
+
+1. **Install Docker Desktop:**
+   - Download from [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/)
+   - Or via Homebrew: `brew install --cask docker`
+
+2. **Start Docker Desktop:**
+   - Open Docker Desktop from Applications
+   - Wait for Docker to fully start (whale icon in menu bar should be steady)
+
+3. **Configure File Sharing (Required for macOS):**
+   - Open Docker Desktop → Settings → Resources → File Sharing
+   - Add `/opt` to the shared paths list (needed for Homebrew and MCP tools)
+   - Click "Apply & Restart"
+
+4. **Verify Installation:**
+   ```bash
+   docker info  # Should show server information
+   docker run --rm hello-world  # Should download and run test container
+   ```
+
+</details>
+
+<details>
+<summary><b>Linux Installation</b></summary>
+
+1. **Install Docker Engine:**
+   ```bash
+   # Ubuntu/Debian
+   curl -fsSL https://get.docker.com -o get-docker.sh
+   sudo sh get-docker.sh
+
+   # Add your user to docker group (avoid sudo)
+   sudo usermod -aG docker $USER
+   newgrp docker  # Or logout and login
+   ```
+
+2. **Verify Installation:**
+   ```bash
+   docker info
+   docker run --rm hello-world
+   ```
+
+</details>
+
+#### Setup NightShift with Docker
 
 ```bash
-# 1. Build the executor container (includes Claude Code + MCP dependencies)
+# 1. Build the executor container (includes Claude Code + Python)
 ./scripts/build-executor.sh
 
 # 2. Verify the build
@@ -167,23 +213,47 @@ docker run --rm nightshift-claude-executor:latest --version
 export NIGHTSHIFT_USE_DOCKER=true
 
 # Or add to your shell profile for permanent use
-echo 'export NIGHTSHIFT_USE_DOCKER=true' >> ~/.bashrc
+echo 'export NIGHTSHIFT_USE_DOCKER=true' >> ~/.bashrc  # bash
+echo 'export NIGHTSHIFT_USE_DOCKER=true' >> ~/.zshrc   # zsh
 ```
 
-**How it works:**
+#### How It Works
+
 - NightShift runs natively on your host (manages database, queue, planning)
 - Each Claude Code task executes in a fresh, isolated Docker container
 - Working directory and `~/.claude` config are mounted into containers
+- Files created by tasks have correct ownership (no root-owned files)
 - All commands work exactly the same - Docker execution is transparent
 
-**Benefits:**
-- ✅ Task isolation and sandboxing
-- ✅ Enhanced security (reduced attack surface)
-- ✅ Resource limits (CPU/memory can be constrained)
-- ✅ Reproducible execution environments
-- ✅ Easy to disable (unset environment variable)
+#### Benefits
 
-See [docs/CONTAINERIZED_EXECUTION.md](docs/CONTAINERIZED_EXECUTION.md) for detailed documentation, troubleshooting, and advanced configuration.
+- ✅ **Task Isolation:** Each task runs in its own container
+- ✅ **Enhanced Security:** Reduced attack surface, read-only filesystem
+- ✅ **Resource Limits:** Can constrain CPU/memory per task
+- ✅ **Reproducible Execution:** Consistent environment across runs
+- ✅ **Easy to Toggle:** Just unset the environment variable to disable
+
+#### Current Limitations
+
+- ⚠️ **MCP Tools:** Currently only built-in Claude tools work in containers
+  - File operations (Read, Write, Edit, Bash) work perfectly
+  - MCP servers (arxiv, gemini, etc.) not yet supported in Docker mode
+  - Use native mode (`unset NIGHTSHIFT_USE_DOCKER`) for MCP tool access
+- This is being actively worked on and will be addressed in a future update
+
+#### Troubleshooting
+
+**"Cannot connect to Docker daemon":**
+- Ensure Docker Desktop is running (macOS) or Docker service is active (Linux)
+- Check with `docker info`
+
+**"Permission denied" errors:**
+- Linux: Add user to docker group `sudo usermod -aG docker $USER`
+- macOS: Docker Desktop handles permissions automatically
+
+**"Path not shared" errors (macOS only):**
+- Add the path to Docker Desktop → Settings → Resources → File Sharing
+- Required paths: `/opt` (for Homebrew/MCP tools)
 
 ## Usage
 

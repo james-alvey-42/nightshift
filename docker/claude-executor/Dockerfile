@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
-    python3.13 \
-    python3.13-venv \
+    python3 \
+    python3-venv \
     python3-pip \
     # Playwright dependencies (for mcp__playwright__)
     libnss3 \
@@ -44,14 +44,16 @@ RUN if getent passwd ${USER_ID} > /dev/null 2>&1; then \
         usermod -d /home/executor -m -s /bin/bash $USER_NAME; \
         ln -sf /home/$USER_NAME /home/executor; \
     else \
-        groupadd -g ${GROUP_ID} executor && \
-        useradd -m -u ${USER_ID} -g executor -s /bin/bash executor; \
+        if ! getent group ${GROUP_ID} > /dev/null 2>&1; then \
+            groupadd -g ${GROUP_ID} executor; \
+        fi && \
+        useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash executor; \
     fi
 
 # Switch to non-root user (use the UID directly for compatibility)
 USER ${USER_ID}:${GROUP_ID}
 WORKDIR /work
 
-# Set Claude as entrypoint
-ENTRYPOINT ["claude"]
+# Set Claude as entrypoint (use absolute path for compatibility)
+ENTRYPOINT ["/usr/local/bin/claude"]
 CMD ["--help"]
