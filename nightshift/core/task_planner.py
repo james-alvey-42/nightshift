@@ -63,9 +63,13 @@ Your job is to analyze a user's task description and determine:
 2. What system prompt the executor agent should use
 3. How to enhance/clarify the user's prompt if needed
 4. Estimated resource usage
+5. **SECURITY: Which directories the task needs write access to (for sandboxing)**
 
 USER TASK:
 {description}
+
+CURRENT WORKING DIRECTORY:
+{Path.cwd()}
 
 AVAILABLE TOOLS:
 {self.tools_reference}
@@ -74,10 +78,11 @@ Respond with ONLY a JSON object (no other text) with this structure:
 {{
     "enhanced_prompt": "The full detailed prompt for the executor agent",
     "allowed_tools": ["tool1", "tool2", ...],
+    "allowed_directories": ["/absolute/path/to/dir1", "/absolute/path/to/dir2"],
     "system_prompt": "System prompt for the executor",
     "estimated_tokens": 1000,
     "estimated_time": 60,
-    "reasoning": "Brief explanation of tool choices"
+    "reasoning": "Brief explanation of tool choices and directory permissions"
 }}
 
 Guidelines:
@@ -86,6 +91,19 @@ Guidelines:
 - For arxiv tasks, include mcp__arxiv__download and either mcp__gemini__ask or mcp__claude__ask for summarization
 - Estimated time: simple tasks 30s, paper analysis 60s, data analysis 120s
 - Estimated tokens: add ~2000 for paper tasks, ~1000 for data tasks, ~500 base
+
+**SECURITY - Directory Sandboxing (CRITICAL):**
+- The executor will run in a macOS sandbox that BLOCKS all filesystem writes except to allowed_directories
+- Be DEFENSIVE: Only grant write access to the MINIMUM directories needed
+- Use ABSOLUTE PATHS only (resolve relative paths from current working directory shown above)
+- Common patterns:
+  * If task mentions "current directory" or no specific location → ["{Path.cwd()}"]
+  * If task specifies a project path → use that exact path
+  * If task needs output files → only allow the output directory
+  * If task modifies multiple repos → list all needed directories separately
+  * NEVER allow "/" or home directory unless explicitly required
+- Default to current directory if uncertain, but explain in reasoning
+- The sandbox automatically allows /tmp for temporary files (no need to specify)
 """
 
         try:
@@ -96,12 +114,13 @@ Guidelines:
                 "properties": {
                     "enhanced_prompt": {"type": "string"},
                     "allowed_tools": {"type": "array", "items": {"type": "string"}},
+                    "allowed_directories": {"type": "array", "items": {"type": "string"}},
                     "system_prompt": {"type": "string"},
                     "estimated_tokens": {"type": "integer"},
                     "estimated_time": {"type": "integer"},
                     "reasoning": {"type": "string"}
                 },
-                "required": ["enhanced_prompt", "allowed_tools", "system_prompt", "estimated_tokens", "estimated_time"]
+                "required": ["enhanced_prompt", "allowed_tools", "allowed_directories", "system_prompt", "estimated_tokens", "estimated_time"]
             })
 
             cmd = [
@@ -157,8 +176,8 @@ Guidelines:
                 plan = wrapper
 
             # Validate required fields
-            required_fields = ["enhanced_prompt", "allowed_tools", "system_prompt",
-                             "estimated_tokens", "estimated_time"]
+            required_fields = ["enhanced_prompt", "allowed_tools", "allowed_directories",
+                             "system_prompt", "estimated_tokens", "estimated_time"]
             for field in required_fields:
                 if field not in plan:
                     raise Exception(f"Planning response missing field: {field}")
@@ -201,12 +220,16 @@ A user has reviewed a task plan and requested changes. Your job is to refine the
 CURRENT PLAN:
 Enhanced Prompt: {current_plan.get('enhanced_prompt', 'N/A')}
 Allowed Tools: {', '.join(current_plan.get('allowed_tools', []))}
+Allowed Directories: {', '.join(current_plan.get('allowed_directories', []))}
 System Prompt: {current_plan.get('system_prompt', 'N/A')}
 Estimated Tokens: {current_plan.get('estimated_tokens', 0)}
 Estimated Time: {current_plan.get('estimated_time', 0)}s
 
 USER FEEDBACK:
 {feedback}
+
+CURRENT WORKING DIRECTORY:
+{Path.cwd()}
 
 AVAILABLE TOOLS:
 {self.tools_reference}
@@ -215,6 +238,7 @@ Based on the user's feedback, create a REVISED plan. Respond with ONLY a JSON ob
 {{
     "enhanced_prompt": "The revised detailed prompt for the executor agent",
     "allowed_tools": ["tool1", "tool2", ...],
+    "allowed_directories": ["/absolute/path/to/dir1", "/absolute/path/to/dir2"],
     "system_prompt": "Revised system prompt for the executor",
     "estimated_tokens": 1000,
     "estimated_time": 60,
@@ -227,6 +251,7 @@ Guidelines:
 - Adjust tool selection if the user requests different capabilities
 - Update estimates based on scope changes
 - Explain what changed in the reasoning field
+- **SECURITY**: Only allow write access to minimum required directories (use absolute paths)
 """
 
         try:
@@ -236,12 +261,13 @@ Guidelines:
                 "properties": {
                     "enhanced_prompt": {"type": "string"},
                     "allowed_tools": {"type": "array", "items": {"type": "string"}},
+                    "allowed_directories": {"type": "array", "items": {"type": "string"}},
                     "system_prompt": {"type": "string"},
                     "estimated_tokens": {"type": "integer"},
                     "estimated_time": {"type": "integer"},
                     "reasoning": {"type": "string"}
                 },
-                "required": ["enhanced_prompt", "allowed_tools", "system_prompt",
+                "required": ["enhanced_prompt", "allowed_tools", "allowed_directories", "system_prompt",
                              "estimated_tokens", "estimated_time"]
             })
 
@@ -286,8 +312,8 @@ Guidelines:
                 refined_plan = wrapper
 
             # Validate required fields
-            required_fields = ["enhanced_prompt", "allowed_tools", "system_prompt",
-                             "estimated_tokens", "estimated_time"]
+            required_fields = ["enhanced_prompt", "allowed_tools", "allowed_directories",
+                             "system_prompt", "estimated_tokens", "estimated_time"]
             for field in required_fields:
                 if field not in refined_plan:
                     raise Exception(f"Refined plan missing field: {field}")

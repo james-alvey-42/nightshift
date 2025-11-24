@@ -13,6 +13,7 @@ from .task_queue import Task, TaskQueue, TaskStatus
 from .logger import NightShiftLogger
 from .file_tracker import FileTracker
 from .notifier import Notifier
+from .sandbox import SandboxManager
 
 
 class AgentManager:
@@ -24,7 +25,8 @@ class AgentManager:
         logger: NightShiftLogger,
         output_dir: str = "output",
         claude_bin: str = "claude",
-        enable_notifications: bool = True
+        enable_notifications: bool = True,
+        enable_sandbox: bool = True
     ):
         self.task_queue = task_queue
         self.logger = logger
@@ -32,10 +34,16 @@ class AgentManager:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.claude_bin = claude_bin
         self.enable_notifications = enable_notifications
+        self.enable_sandbox = enable_sandbox
 
         # Notifier uses notifications directory next to output
         notifications_dir = self.output_dir.parent / "notifications"
         self.notifier = Notifier(notification_dir=str(notifications_dir)) if enable_notifications else None
+
+        # Sandbox manager for macOS isolation
+        self.sandbox = SandboxManager() if enable_sandbox and SandboxManager.is_available() else None
+        if enable_sandbox and not self.sandbox:
+            self.logger.warning("Sandboxing requested but sandbox-exec not available on this system")
 
     def execute_task(
         self,
@@ -252,7 +260,27 @@ class AgentManager:
             escaped_prompt = task.system_prompt.replace('"', '\\"')
             cmd_parts.append(f'--system-prompt "{escaped_prompt}"')
 
-        return " ".join(cmd_parts)
+        claude_cmd = " ".join(cmd_parts)
+
+        # Wrap with sandbox if enabled and directories specified
+        if self.sandbox and task.allowed_directories:
+            try:
+                # Validate directories before sandboxing
+                validated_dirs = SandboxManager.validate_directories(task.allowed_directories)
+                self.logger.info(f"Sandboxing task with allowed directories: {validated_dirs}")
+                return self.sandbox.wrap_command(
+                    claude_cmd,
+                    validated_dirs,
+                    profile_name=task.task_id
+                )
+            except ValueError as e:
+                self.logger.error(f"Sandbox validation failed: {e}")
+                raise
+        elif self.sandbox:
+            # Sandbox enabled but no directories specified - this should not happen
+            self.logger.warning(f"Sandbox enabled but no allowed_directories specified for task {task.task_id}")
+
+        return claude_cmd
 
     def _parse_output(self, stdout: str, stderr: str) -> Dict[str, Any]:
         """

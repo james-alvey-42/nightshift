@@ -51,9 +51,10 @@ def cli(ctx):
 @click.argument('description')
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
+@click.option('--allow-dir', multiple=True, help='Additional directories to allow writes (can be specified multiple times)')
 @click.pass_context
-def submit(ctx, description, auto_approve, planning_timeout):
-    """Submit a new task"""
+def submit(ctx, description, auto_approve, planning_timeout, allow_dir):
+    """Submit a new task (with sandbox isolation on macOS)"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
     task_planner = ctx.obj['task_planner']
@@ -68,11 +69,21 @@ def submit(ctx, description, auto_approve, planning_timeout):
         # Generate unique task ID
         task_id = f"task_{uuid.uuid4().hex[:8]}"
 
+        # Merge planner's suggested directories with user-provided ones
+        allowed_directories = list(plan.get('allowed_directories', []))
+        if allow_dir:
+            # Convert relative paths to absolute
+            for dir_path in allow_dir:
+                abs_path = str(Path(dir_path).resolve())
+                if abs_path not in allowed_directories:
+                    allowed_directories.append(abs_path)
+
         # Create task in STAGED state
         task = task_queue.create_task(
             task_id=task_id,
             description=plan['enhanced_prompt'],
             allowed_tools=plan['allowed_tools'],
+            allowed_directories=allowed_directories,
             system_prompt=plan['system_prompt'],
             estimated_tokens=plan['estimated_tokens'],
             estimated_time=plan['estimated_time']
@@ -83,10 +94,14 @@ def submit(ctx, description, auto_approve, planning_timeout):
         # Display plan
         console.print(f"\n[bold green]✓ Task created:[/bold green] {task_id}")
 
+        # Format directories display
+        dirs_display = "\n".join(f"  • {d}" for d in allowed_directories) if allowed_directories else "  (none)"
+
         panel = Panel.fit(
             f"[yellow]Original:[/yellow] {description}\n\n"
             f"[yellow]Enhanced prompt:[/yellow] {plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(plan['allowed_tools'])}\n\n"
+            f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}\n\n"
             f"[yellow]Estimated:[/yellow] ~{plan['estimated_tokens']} tokens, ~{plan['estimated_time']}s\n\n"
             f"[yellow]Reasoning:[/yellow] {plan.get('reasoning', 'N/A')}",
             title=f"Task Plan: {task_id}",
