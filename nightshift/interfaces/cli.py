@@ -176,8 +176,9 @@ def submit(ctx, description, auto_approve, planning_timeout, mount):
 @cli.command()
 @click.option('--status', type=click.Choice(['staged', 'committed', 'running', 'completed', 'failed', 'cancelled']),
               help='Filter by status')
+@click.option('--json', 'output_json', is_flag=True, help='Output as JSON for programmatic consumption')
 @click.pass_context
-def queue(ctx, status):
+def queue(ctx, status, output_json):
     """View task queue"""
     task_queue = ctx.obj['task_queue']
 
@@ -190,7 +191,29 @@ def queue(ctx, status):
         title = "All Tasks"
 
     if not tasks:
-        console.print(f"\n[dim]No tasks found[/dim]\n")
+        if output_json:
+            print(json.dumps([]))
+        else:
+            console.print(f"\n[dim]No tasks found[/dim]\n")
+        return
+
+    # JSON output mode
+    if output_json:
+        task_list = []
+        for task in tasks:
+            task_list.append({
+                'task_id': task.task_id,
+                'status': task.status,
+                'description': task.description,
+                'allowed_tools': task.allowed_tools or [],
+                'estimated_time': task.estimated_time,
+                'created_at': task.created_at,
+                'started_at': task.started_at,
+                'completed_at': task.completed_at,
+                'token_usage': task.token_usage,
+                'execution_time': task.execution_time
+            })
+        print(json.dumps(task_list, indent=2))
         return
 
     # Create table

@@ -289,8 +289,8 @@ class TaskManagerGUI:
             # Get filter value
             filter_status = self.filter_var.get()
 
-            # Build command
-            cmd = ["nightshift", "queue"]
+            # Build command with JSON output
+            cmd = ["nightshift", "queue", "--json"]
             if filter_status != "all":
                 cmd.extend(["--status", filter_status])
 
@@ -298,8 +298,8 @@ class TaskManagerGUI:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
             if result.returncode == 0:
-                # Parse output and update tree
-                self._update_tree_from_queue_output(result.stdout)
+                # Parse JSON output and update tree
+                self._update_tree_from_json(result.stdout)
             else:
                 # Show error in details
                 self._show_error(f"Failed to fetch tasks:\n{result.stderr}")
@@ -313,82 +313,45 @@ class TaskManagerGUI:
         if self.auto_refresh_enabled and self.auto_refresh_var.get():
             self.refresh_timer = self.root.after(10000, self.refresh_task_list)
 
-    def _update_tree_from_queue_output(self, output: str):
-        """Parse queue output and update treeview"""
+    def _update_tree_from_json(self, json_output: str):
+        """Parse JSON output and update treeview"""
         # Clear existing items
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        # Get actual task data using a more reliable method
         try:
-            # Call nightshift queue with JSON output would be better, but we'll parse the output
-            # For now, we'll use a direct approach by calling the CLI
-            result = subprocess.run(
-                ["nightshift", "queue", "--status", self.filter_var.get()] if self.filter_var.get() != "all"
-                else ["nightshift", "queue"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            # Parse JSON
+            tasks = json.loads(json_output)
 
-            # Parse the rich table output
-            lines = result.stdout.split('\n')
-            tasks = []
-
-            # Find the table content (skip headers and decorations)
-            in_table = False
-            for line in lines:
-                line = line.strip()
-                if not line or '─' in line or line.startswith('│') and 'ID' in line:
-                    if 'ID' in line and 'Status' in line:
-                        in_table = True
-                    continue
-
-                if in_table and line.startswith('│'):
-                    # Parse table row
-                    parts = [p.strip() for p in line.split('│')[1:-1]]
-                    if len(parts) >= 5:
-                        task_id = parts[0]
-                        status_raw = parts[1]
-                        # Remove ANSI color codes from status
-                        status = status_raw.split('[')[-1].split(']')[0].lower() if '[' in status_raw else status_raw.lower()
-                        description = parts[2]
-                        est_time = parts[3]
-                        created = parts[4]
-
-                        # Get more details for this task
-                        task_details = self._get_task_details_raw(task_id)
-                        tools = ", ".join(task_details.get('tools', [][:2])) if task_details else "N/A"
-
-                        tasks.append({
-                            'task_id': task_id,
-                            'status': status,
-                            'description': description,
-                            'tools': tools,
-                            'est_time': est_time,
-                            'created': created
-                        })
-
-            # If parsing failed, try alternative approach
             if not tasks:
-                # Check if there are no tasks
-                if "No tasks found" in result.stdout:
-                    self.task_count_label.config(text="Tasks: 0")
-                    return
+                self.task_count_label.config(text="Tasks: 0")
+                return
 
             # Add tasks to tree
             for task in tasks:
-                # Determine status color
+                # Extract data
+                task_id = task['task_id']
                 status = task['status'].lower()
+                description = task['description']
+                tools = ", ".join((task.get('allowed_tools', []) or [])[:3])  # Show first 3 tools
+                est_time = f"{task['estimated_time']}s" if task.get('estimated_time') else "N/A"
+                created = task['created_at'].split('T')[0] if task.get('created_at') else "N/A"
+
+                # Truncate description
+                if len(description) > 60:
+                    description = description[:60] + "..."
+
+                # Determine status color tag
                 tag = f"status_{status}"
 
+                # Insert into tree
                 self.tree.insert('', tk.END, values=(
-                    task['task_id'],
-                    task['status'].upper(),
-                    task['description'],
-                    task['tools'],
-                    task['est_time'],
-                    task['created']
+                    task_id,
+                    status.upper(),
+                    description,
+                    tools,
+                    est_time,
+                    created
                 ), tags=(tag,))
 
                 # Configure tag color
@@ -398,8 +361,10 @@ class TaskManagerGUI:
             # Update task count
             self.task_count_label.config(text=f"Tasks: {len(tasks)}")
 
+        except json.JSONDecodeError as e:
+            self._show_error(f"Error parsing task JSON: {str(e)}")
         except Exception as e:
-            self._show_error(f"Error parsing task queue: {str(e)}")
+            self._show_error(f"Error updating task list: {str(e)}")
 
     def _get_task_details_raw(self, task_id: str) -> Optional[Dict]:
         """Get raw task details from CLI"""
