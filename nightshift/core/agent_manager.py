@@ -66,14 +66,18 @@ class AgentManager:
         file_tracker.start_tracking()
 
         try:
-            # Build Claude command
+            # Build Claude command (potentially wrapped with sandbox)
             cmd = self._build_command(task)
 
             # Log the exact command for debugging
-            self.logger.info("=" * 60)
-            self.logger.info("EXECUTING CLAUDE COMMAND:")
-            self.logger.info(cmd)
-            self.logger.info("=" * 60)
+            self.logger.info("=" * 80)
+            self.logger.info("EXECUTING COMMAND:")
+            if self.sandbox and task.allowed_directories:
+                self.logger.info("🔒 SANDBOXED EXECUTION (writes restricted)")
+                self.logger.info(f"   Allowed directories: {task.allowed_directories}")
+            self.logger.info("")
+            self.logger.info(f"Full command: {cmd}")
+            self.logger.info("=" * 80)
 
             self.logger.log_task_started(task.task_id, cmd)
 

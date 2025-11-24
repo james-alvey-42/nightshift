@@ -52,8 +52,9 @@ def cli(ctx):
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
 @click.option('--allow-dir', multiple=True, help='Additional directories to allow writes (can be specified multiple times)')
+@click.option('--debug', is_flag=True, help='Show full command and sandbox profile')
 @click.pass_context
-def submit(ctx, description, auto_approve, planning_timeout, allow_dir):
+def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
     """Submit a new task (with sandbox isolation on macOS)"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -113,6 +114,40 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir):
             console.print(f"\n[bold yellow]Auto-approving and executing...[/bold yellow]")
             task_queue.update_status(task_id, TaskStatus.COMMITTED)
             logger.log_task_approved(task_id)
+
+            # Show debug info if requested
+            if debug:
+                # Get the command that will be executed
+                from ..core.sandbox import SandboxManager
+                cmd_parts = [agent_manager.claude_bin, "-p"]
+                cmd_parts.append(f'"{task.description}"')
+                cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
+                if task.allowed_tools:
+                    cmd_parts.append(f"--allowed-tools {' '.join(task.allowed_tools)}")
+                claude_cmd = " ".join(cmd_parts)
+
+                if agent_manager.sandbox and task.allowed_directories:
+                    # Show sandbox profile
+                    temp_sandbox = SandboxManager()
+                    profile_path = temp_sandbox.create_profile(task.allowed_directories, f"{task_id}_debug")
+
+                    console.print("\n[bold cyan]🔍 Debug Information[/bold cyan]")
+                    console.print(f"[dim]Sandbox profile: {profile_path}[/dim]\n")
+
+                    with open(profile_path) as f:
+                        profile_content = f.read()
+
+                    syntax = Syntax(profile_content, "scheme", theme="monokai", line_numbers=True)
+                    console.print(Panel(syntax, title="Sandbox Profile", border_style="cyan"))
+
+                    wrapped_cmd = f'sandbox-exec -f "{profile_path}" {claude_cmd}'
+                    console.print(f"\n[bold cyan]Full command:[/bold cyan]")
+                    console.print(f"[dim]{wrapped_cmd}[/dim]\n")
+
+                    temp_sandbox.cleanup()
+                else:
+                    console.print(f"\n[bold cyan]🔍 Debug - Full command:[/bold cyan]")
+                    console.print(f"[dim]{claude_cmd}[/dim]\n")
 
             console.print(f"\n[bold blue]▶ Executing task...[/bold blue]\n")
             result = agent_manager.execute_task(task)

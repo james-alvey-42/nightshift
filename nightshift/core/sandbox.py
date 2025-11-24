@@ -129,7 +129,8 @@ class SandboxManager:
         # Build sandbox-exec command
         wrapped = f'sandbox-exec -f "{profile_path}" {command}'
 
-        logger.info(f"Wrapped command with sandbox: {wrapped}")
+        logger.info(f"🔒 Sandbox profile: {profile_path}")
+        logger.debug(f"Wrapped command: {wrapped}")
 
         return wrapped
 
