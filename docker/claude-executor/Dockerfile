@@ -7,7 +7,9 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    wget \
     ca-certificates \
+    jq \
     python3 \
     python3-venv \
     python3-pip \
@@ -29,8 +31,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
+# Install GitHub CLI (gh)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Claude Code via npm
 RUN npm install -g @anthropic-ai/claude-code
+
+# Install mcp-handley-lab MCP servers
+# Copy the package source
+COPY mcp-handley-lab /tmp/mcp-handley-lab
+# Install in a venv for isolation
+RUN python3 -m venv /opt/mcp-venv && \
+    /opt/mcp-venv/bin/pip install --no-cache-dir /tmp/mcp-handley-lab && \
+    rm -rf /tmp/mcp-handley-lab
+# Add MCP venv to PATH
+ENV PATH="/opt/mcp-venv/bin:${PATH}"
 
 # Create non-root user (UID will be overridden at runtime)
 # Default to 1000 but build script can customize

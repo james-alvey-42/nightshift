@@ -2,9 +2,11 @@
 Docker Executor - Runs Claude Code in isolated containers
 Wraps Claude CLI execution in Docker for security and isolation
 """
+
 import os
 import json
 import logging
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -20,7 +22,9 @@ class DockerExecutor:
     """Executes Claude Code in isolated Docker containers"""
 
     @staticmethod
-    def _create_container_config(source_config_path: Path) -> Path:
+    def _create_container_config(
+        source_config_path: Path, use_container_mcps: bool = False
+    ) -> Path:
         """
         Create a temporary .claude.json with absolute MCP paths for container use
 
@@ -30,6 +34,8 @@ class DockerExecutor:
 
         Args:
             source_config_path: Path to user's .claude.json config file
+            use_container_mcps: If True, use container MCP paths (/opt/mcp-venv/bin/)
+                               instead of resolving host paths. Used on macOS/Windows.
 
         Returns:
             Path to temporary config file with normalized paths
@@ -39,7 +45,7 @@ class DockerExecutor:
             return source_config_path
 
         try:
-            with open(source_config_path, 'r') as f:
+            with open(source_config_path, "r") as f:
                 config = json.load(f)
 
             servers = config.get("mcpServers", {})
@@ -51,22 +57,28 @@ class DockerExecutor:
                     # Already absolute or empty
                     continue
 
-                # Resolve command to absolute path
-                abs_path = shutil.which(cmd)
-                if abs_path:
-                    server_config["command"] = abs_path
+                if use_container_mcps:
+                    # Use container MCP path (for macOS/Windows)
+                    container_path = f"/opt/mcp-venv/bin/{cmd}"
+                    server_config["command"] = container_path
                     modified = True
+                else:
+                    # Resolve command to absolute host path (for Linux)
+                    abs_path = shutil.which(cmd)
+                    if abs_path:
+                        server_config["command"] = abs_path
+                        modified = True
 
             # Only create temp file if we made changes
             if modified:
                 # Create temp file in same directory as original for same filesystem
                 temp_fd, temp_path = tempfile.mkstemp(
-                    suffix='.json',
-                    prefix='.claude.nightshift.',
-                    dir=source_config_path.parent
+                    suffix=".json",
+                    prefix=".claude.nightshift.",
+                    dir=source_config_path.parent,
                 )
 
-                with os.fdopen(temp_fd, 'w') as f:
+                with os.fdopen(temp_fd, "w") as f:
                     json.dump(config, f, indent=2)
 
                 return Path(temp_path)
@@ -76,14 +88,16 @@ class DockerExecutor:
 
         except (json.JSONDecodeError, IOError) as e:
             # Don't fail if config is malformed, just use original
-            logger.warning(f"Could not normalize MCP paths in {source_config_path}: {e}")
+            logger.warning(
+                f"Could not normalize MCP paths in {source_config_path}: {e}"
+            )
             return source_config_path
 
     def __init__(
         self,
         image_name: str = "nightshift-claude-executor:latest",
         working_dir: Optional[str] = None,
-        claude_config_dir: Optional[str] = None
+        claude_config_dir: Optional[str] = None,
     ):
         """
         Initialize Docker executor
@@ -95,7 +109,9 @@ class DockerExecutor:
         """
         self.image_name = image_name
         self.working_dir = Path(working_dir) if working_dir else Path.cwd()
-        self.claude_config_dir = Path(claude_config_dir) if claude_config_dir else Path.home() / ".claude"
+        self.claude_config_dir = (
+            Path(claude_config_dir) if claude_config_dir else Path.home() / ".claude"
+        )
         self._temp_config_path = None  # Track temp config for cleanup
 
     @staticmethod
@@ -141,7 +157,7 @@ class DockerExecutor:
         self,
         claude_args: List[str],
         env_vars: Optional[Dict[str, str]] = None,
-        additional_mounts: Optional[List[Dict[str, str]]] = None
+        additional_mounts: Optional[List[Dict[str, str]]] = None,
     ) -> List[str]:
         """
         Build docker run command for Claude Code execution
@@ -159,7 +175,8 @@ class DockerExecutor:
             Complete docker run command as list
         """
         cmd = [
-            "docker", "run",
+            "docker",
+            "run",
             "--rm",  # Remove container after execution
             "--read-only",  # Make container root filesystem read-only
         ]
@@ -172,28 +189,50 @@ class DockerExecutor:
         gid = os.getgid()
         cmd.extend(["-u", f"{uid}:{gid}"])
 
+        # MCP server mounting strategy depends on host OS
+        # - Linux: Mount host MCP servers (same architecture, compatible binaries)
+        # - macOS/Windows: Use container-installed MCP servers (incompatible binaries)
+        host_os = platform.system()
+        use_container_mcps = host_os != "Linux"
+
         # Volume mounts
         # Mount system directories for interpreters (Python, Node, etc.)
-        # MCP server venvs have symlinks pointing to system interpreters
         # Note: We don't mount /usr because Claude CLI is installed there in the container
-        # and mounting host's /usr would overwrite it
-        system_dirs = ["/lib", "/lib64", "/opt"]
+        # Note: On macOS/Windows, we don't mount /opt because it would overwrite
+        #       the container's /opt/mcp-venv where MCP servers are installed
+        # Note: We don't mount Homebrew directories because macOS binaries (Mach-O)
+        #       are incompatible with Linux containers. Common tools (git, gh, jq, etc.)
+        #       are installed in the container image instead.
+        if use_container_mcps:
+            # macOS/Windows: Only mount /lib, /lib64 (skip /opt)
+            system_dirs = ["/lib", "/lib64"]
+        else:
+            # Linux: Mount all system dirs including /opt
+            system_dirs = ["/lib", "/lib64", "/opt"]
+
         for sys_dir in system_dirs:
             sys_path = Path(sys_dir)
             if sys_path.exists():
                 cmd.extend(["-v", f"{sys_dir}:{sys_dir}:ro"])
 
-        # Auto-discover and mount MCP server paths (read-only)
-        # This mounts venvs, npm globals, etc. at the same paths to preserve shebangs
-        try:
-            mcp_mounts = discover_mcp_mount_paths()
-            if mcp_mounts:
-                logger.debug(f"Mounting {len(mcp_mounts)} MCP server paths")
-                for mount_path in sorted(mcp_mounts):
-                    cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
-        except Exception as e:
-            # If discovery fails, log but continue (MCP tools won't work but container will run)
-            logger.error(f"MCP discovery failed: {e}", exc_info=True)
+        if host_os == "Linux":
+            # Auto-discover and mount MCP server paths (read-only)
+            # Host Python binaries are Linux ELF - compatible with container
+            try:
+                mcp_mounts = discover_mcp_mount_paths()
+                if mcp_mounts:
+                    logger.debug(
+                        f"Mounting {len(mcp_mounts)} host MCP server paths (Linux)"
+                    )
+                    for mount_path in sorted(mcp_mounts):
+                        cmd.extend(["-v", f"{mount_path}:{mount_path}:ro"])
+            except Exception as e:
+                # If discovery fails, log but continue (will fall back to container MCP)
+                logger.error(f"MCP discovery failed: {e}", exc_info=True)
+        else:
+            # macOS/Windows: Use MCP servers built into container at /opt/mcp-venv
+            # Host binaries (Mach-O/PE) are incompatible with Linux container
+            logger.debug(f"Using container-installed MCP servers (host OS: {host_os})")
 
         # Mount Claude config as read-write (needs to write debug logs)
         # This overrides the read-only mount if .claude is inside a discovered path
@@ -203,8 +242,12 @@ class DockerExecutor:
         # Create temporary .claude.json with normalized MCP paths for container
         # This avoids mutating the user's original config file
         source_config = Path.home() / ".claude.json"
-        container_config = self._create_container_config(source_config)
-        self._temp_config_path = container_config if container_config != source_config else None
+        container_config = self._create_container_config(
+            source_config, use_container_mcps
+        )
+        self._temp_config_path = (
+            container_config if container_config != source_config else None
+        )
 
         # Mount the container config (may be temp or original)
         # Must be read-write so Claude can update MCP server state
@@ -215,6 +258,48 @@ class DockerExecutor:
         # Mount working directory as read-write (for task outputs)
         # This is where Claude creates files that the user can retrieve
         cmd.extend(["-v", f"{self.working_dir}:/work"])
+
+        # Auto-mount Google Calendar credentials if they exist
+        # Users can set GOOGLE_CALENDAR_CREDENTIALS_PATH and GOOGLE_CALENDAR_TOKEN_PATH
+        # environment variables to customize locations
+        google_creds_path = os.environ.get(
+            "GOOGLE_CALENDAR_CREDENTIALS_PATH",
+            str(Path.home() / ".google_calendar_credentials.json"),
+        )
+        google_token_path = os.environ.get(
+            "GOOGLE_CALENDAR_TOKEN_PATH",
+            str(Path.home() / ".google_calendar_token.json"),
+        )
+
+        # Mount credentials if they exist (read-only for security)
+        if Path(google_creds_path).exists():
+            cmd.extend(["-v", f"{google_creds_path}:{google_creds_path}:ro"])
+            logger.debug(f"Mounting Google Calendar credentials: {google_creds_path}")
+
+        # Mount token if it exists (read-write so it can be refreshed)
+        if Path(google_token_path).exists():
+            cmd.extend(["-v", f"{google_token_path}:{google_token_path}"])
+            logger.debug(f"Mounting Google Calendar token: {google_token_path}")
+
+        # Auto-mount git configuration
+        gitconfig_path = Path.home() / ".gitconfig"
+        if gitconfig_path.exists():
+            cmd.extend(["-v", f"{gitconfig_path}:{gitconfig_path}:ro"])
+            logger.debug(f"Mounting git config: {gitconfig_path}")
+
+        # Auto-mount GitHub CLI configuration (for gh command authentication)
+        gh_config_dir = Path.home() / ".config" / "gh"
+        if gh_config_dir.exists():
+            cmd.extend(["-v", f"{gh_config_dir}:{gh_config_dir}:ro"])
+            logger.debug(f"Mounting GitHub CLI config: {gh_config_dir}")
+
+        # Auto-mount SSH directory (for git SSH authentication)
+        # Note: Mounted read-only for security. If you need to generate keys in container,
+        # use additional_mounts with mode='rw'
+        ssh_dir = Path.home() / ".ssh"
+        if ssh_dir.exists():
+            cmd.extend(["-v", f"{ssh_dir}:{ssh_dir}:ro"])
+            logger.debug(f"Mounting SSH directory: {ssh_dir}")
 
         # Mount additional user-specified directories
         if additional_mounts:
@@ -235,7 +320,9 @@ class DockerExecutor:
                 if mode:
                     mount_spec += f":{mode}"
                 cmd.extend(["-v", mount_spec])
-                logger.info(f"Mounting additional path: {host_path} -> {container_path} ({mode})")
+                logger.info(
+                    f"Mounting additional path: {host_path} -> {container_path} ({mode})"
+                )
 
         # Set working directory
         cmd.extend(["-w", "/work"])
@@ -244,12 +331,18 @@ class DockerExecutor:
         home_dir = str(Path.home())
         cmd.extend(["-e", f"HOME={home_dir}"])
 
-        # Set PATH to include venv binaries for MCP servers (if exists)
-        venv_bin = Path.home() / ".claude_venv" / "bin"
-        if venv_bin.exists():
-            path_str = f"{venv_bin}:/usr/local/bin:/usr/bin:/bin"
-        else:
-            path_str = "/usr/local/bin:/usr/bin:/bin"
+        # Set PATH to include MCP venv binaries
+        # Container has MCP servers at /opt/mcp-venv/bin (always available)
+        # Container also has common tools (git, gh, jq, etc.) installed
+        # Also include host venv if it exists (for Linux compatibility)
+        path_parts = ["/opt/mcp-venv/bin"]  # Container MCP servers (always first)
+
+        host_venv_bin = Path.home() / ".claude_venv" / "bin"
+        if host_venv_bin.exists():
+            path_parts.append(str(host_venv_bin))
+
+        path_parts.extend(["/usr/local/bin", "/usr/bin", "/bin"])
+        path_str = ":".join(path_parts)
         cmd.extend(["-e", f"PATH={path_str}"])
 
         # Environment variables for API keys
@@ -282,7 +375,7 @@ class DockerExecutor:
         claude_args: List[str],
         env_vars: Optional[Dict[str, str]] = None,
         timeout: Optional[int] = None,
-        additional_mounts: Optional[List[Dict[str, str]]] = None
+        additional_mounts: Optional[List[Dict[str, str]]] = None,
     ) -> subprocess.CompletedProcess:
         """
         Execute Claude Code in Docker container
@@ -301,22 +394,18 @@ class DockerExecutor:
             subprocess.CompletedProcess result
         """
         cmd = self.build_docker_command(claude_args, env_vars, additional_mounts)
+        print("COMMAND:", cmd)
         return self.run_prepared_command(cmd, timeout=timeout)
 
     def run_prepared_command(
-        self,
-        cmd: List[str],
-        timeout: Optional[int] = None
+        self, cmd: List[str], timeout: Optional[int] = None
     ) -> subprocess.CompletedProcess:
         """
         Execute a previously built docker command and handle cleanup.
         """
         try:
             result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                cmd, capture_output=True, text=True, timeout=timeout
             )
             return result
         finally:
@@ -343,6 +432,6 @@ class DockerExecutor:
         result = subprocess.run(
             ["docker", "image", "inspect", self.image_name],
             capture_output=True,
-            text=True
+            text=True,
         )
         return result.returncode == 0
