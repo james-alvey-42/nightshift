@@ -42,6 +42,9 @@ Thumbs.db
 # MCP session data
 .mcp_*/
 
+# MCP Handley Lab (external package, not part of this repo)
+mcp-handley-lab/
+
 # Test outputs and temporary files
 *.pdf
 *.log
