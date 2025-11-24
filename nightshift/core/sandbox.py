@@ -56,8 +56,16 @@ class SandboxManager:
             str(Path.home() / ".claude")  # Claude CLI needs to write debug logs
         ]
 
+        # Specific files that need write access (not directories)
+        # These are typically credentials/config files that tools need to update
+        allowed_files = [
+            str(Path.home() / ".claude.json"),  # Claude CLI config file
+            str(Path.home() / ".google_calendar_credentials.json"),  # Google Calendar credentials
+            str(Path.home() / ".google_calendar_token.json"),  # Google Calendar OAuth token
+        ]
+
         # Combine and deduplicate
-        all_allowed = list(set(resolved_dirs + temp_dirs))
+        all_allowed_dirs = list(set(resolved_dirs + temp_dirs))
 
         # Generate profile content
         # macOS sandbox: Start with (deny default) then allow specific operations
@@ -83,10 +91,16 @@ class SandboxManager:
             "(allow ipc*)",
             "(allow mach*)",
             "",
-            ";; Allow writes ONLY to specified directories"
+            ";; Allow writes to specific files",
         ]
 
-        for allowed_path in sorted(all_allowed):
+        for file_path in sorted(allowed_files):
+            profile_lines.append(f'(allow file-write* (literal "{file_path}"))')
+
+        profile_lines.append("")
+        profile_lines.append(";; Allow writes to specified directories")
+
+        for allowed_path in sorted(all_allowed_dirs):
             profile_lines.append(f'(allow file-write* (subpath "{allowed_path}"))')
 
         profile_content = "\n".join(profile_lines)
