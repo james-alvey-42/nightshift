@@ -17,6 +17,7 @@ setup(
     entry_points={
         "console_scripts": [
             "nightshift=nightshift.interfaces.cli:main",
+            "nightshift-gui=nightshift.gui.cli:main",
         ],
     },
     python_requires=">=3.8",

@@ -26,6 +26,8 @@ unset NIGHTSHIFT_USE_DOCKER
 ```
 
 ### Running NightShift
+
+#### CLI Interface
 ```bash
 # Submit task and wait for approval
 nightshift submit "task description"
@@ -53,6 +55,23 @@ nightshift cancel task_XXXXXXXX
 nightshift clear
 ```
 
+#### GUI Interface
+```bash
+# Launch the graphical interface
+nightshift-gui
+
+# Or run directly without installation
+python test_gui.py
+```
+
+The GUI provides a user-friendly interface for:
+- Submitting new tasks with instant or staged approval
+- Viewing and filtering the task queue
+- Approving, cancelling, and monitoring tasks
+- Viewing task results and full output
+
+See `docs/GUI_GUIDE.md` for detailed GUI documentation.
+
 ### Testing
 Note: No formal test suite exists yet. Manual testing is done via the CLI commands above.
 
@@ -66,6 +85,8 @@ NightShift uses a two-agent architecture:
 
 ### Key Components
 
+#### Core Components
+
 - **TaskQueue** (nightshift/core/task_queue.py): SQLite-backed persistence with task lifecycle states (STAGED → COMMITTED → RUNNING → COMPLETED/FAILED). Tasks can include `additional_mounts` field for Docker execution.
 
 - **FileTracker** (nightshift/core/file_tracker.py): Takes before/after snapshots of the working directory to detect created/modified files during execution
@@ -77,6 +98,17 @@ NightShift uses a two-agent architecture:
 - **DockerExecutor** (nightshift/core/docker_executor.py): Wraps Claude CLI execution in isolated Docker containers with automatic MCP server path discovery and mounting
 
 - **MCPDiscovery** (nightshift/core/mcp_discovery.py): Auto-discovers MCP server installation paths by parsing `claude mcp list` output and resolving executables to determine what needs to be mounted in containers
+
+#### Interface Components
+
+- **CLI Interface** (nightshift/interfaces/cli.py): Command-line interface using Click and Rich for terminal-based task management
+
+- **GUI Interface** (nightshift/gui/task_manager_gui.py): Tkinter-based graphical interface for visual task management. Provides:
+  - Task submission with instant or staged approval
+  - Real-time task queue visualization with status filtering
+  - Task approval, cancellation, and result viewing
+  - Auto-refresh capabilities for monitoring
+  - Subprocess-based integration with CLI commands for reliability
 
 ### Data Storage
 
