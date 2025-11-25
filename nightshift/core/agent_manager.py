@@ -610,3 +610,64 @@ class AgentManager:
                 "success": False,
                 "error": f"Failed to resume task: {str(e)}"
             }
+
+    def kill_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Kill a running or paused task by sending SIGKILL to its subprocess
+
+        Returns:
+            Dict with keys: success, message, error
+        """
+        # Get task
+        task = self.task_queue.get_task(task_id)
+        if not task:
+            return {
+                "success": False,
+                "error": f"Task {task_id} not found"
+            }
+
+        # Verify task is running or paused
+        if task.status not in [TaskStatus.RUNNING.value, TaskStatus.PAUSED.value]:
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not running or paused (current status: {task.status})"
+            }
+
+        # Verify we have a PID
+        if not task.process_id:
+            return {
+                "success": False,
+                "error": f"Task {task_id} has no process ID stored"
+            }
+
+        # Check if process still exists
+        try:
+            os.kill(task.process_id, 0)  # Signal 0 checks if process exists
+        except ProcessLookupError:
+            # Process already dead, just update status
+            self.task_queue.update_status(task_id, TaskStatus.CANCELLED, error_message="Process already terminated")
+            self.logger.info(f"Task {task_id} process {task.process_id} already terminated")
+            return {
+                "success": True,
+                "message": f"Task {task_id} process was already terminated. Status updated to CANCELLED."
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"No permission to signal process {task.process_id}"
+            }
+
+        # Send SIGKILL to forcefully terminate the process
+        try:
+            os.kill(task.process_id, signal.SIGKILL)
+            self.task_queue.update_status(task_id, TaskStatus.CANCELLED, error_message="Task killed by user")
+            self.logger.info(f"Killed task {task_id} (PID: {task.process_id})")
+            return {
+                "success": True,
+                "message": f"Task {task_id} killed successfully (PID: {task.process_id})"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to kill task: {str(e)}"
+            }

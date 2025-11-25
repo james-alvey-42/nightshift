@@ -555,6 +555,24 @@ def resume(ctx, task_id):
 
 @cli.command()
 @click.argument('task_id')
+@click.pass_context
+def kill(ctx, task_id):
+    """Kill a running or paused task"""
+    agent_manager = ctx.obj['agent_manager']
+
+    result = agent_manager.kill_task(task_id)
+
+    if result['success']:
+        console.print(f"\n[bold red]✖ Task killed:[/bold red] {task_id}")
+        console.print(f"[dim]{result['message']}[/dim]")
+        console.print(f"[dim]Task status updated to CANCELLED[/dim]\n")
+    else:
+        console.print(f"\n[bold red]Error:[/bold red] {result['error']}\n")
+        raise click.Abort()
+
+
+@cli.command()
+@click.argument('task_id')
 @click.option('--follow', '-f', is_flag=True, help='Follow output in real-time (not yet implemented)')
 @click.pass_context
 def watch(ctx, task_id, follow):
