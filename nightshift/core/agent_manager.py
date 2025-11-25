@@ -266,14 +266,22 @@ class AgentManager:
 
         claude_cmd = " ".join(cmd_parts)
 
-        # Wrap with sandbox if enabled and directories specified
-        if self.sandbox and task.allowed_directories:
+        # Wrap with sandbox if enabled
+        if self.sandbox:
             try:
-                # Validate directories before sandboxing
-                validated_dirs = SandboxManager.validate_directories(task.allowed_directories)
-                self.logger.info(f"Sandboxing task with allowed directories: {validated_dirs}")
+                # If no directories specified, run in read-only mode (no write access except /tmp)
+                if not task.allowed_directories:
+                    self.logger.info("Sandboxing task in READ-ONLY mode (no write directories specified)")
+                    # Empty list means no write access except system temp dirs
+                    validated_dirs = []
+                else:
+                    # Validate directories before sandboxing
+                    validated_dirs = SandboxManager.validate_directories(task.allowed_directories)
+                    self.logger.info(f"Sandboxing task with allowed directories: {validated_dirs}")
+
                 if task.needs_git:
                     self.logger.info("Git operations enabled - allowing device file access")
+
                 return self.sandbox.wrap_command(
                     claude_cmd,
                     validated_dirs,
@@ -283,9 +291,6 @@ class AgentManager:
             except ValueError as e:
                 self.logger.error(f"Sandbox validation failed: {e}")
                 raise
-        elif self.sandbox:
-            # Sandbox enabled but no directories specified - this should not happen
-            self.logger.warning(f"Sandbox enabled but no allowed_directories specified for task {task.task_id}")
 
         return claude_cmd
 
