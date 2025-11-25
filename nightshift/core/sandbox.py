@@ -41,6 +41,7 @@ class SandboxManager:
         - Re-allows writes only to specified directories
         - Always allows writes to /tmp and /private/tmp for temp files
         - Optionally allows device files (/dev/null, /dev/tty) if needs_git is True
+        - Optionally allows ~/.config/gh/ for gh CLI token management if needs_git is True
         """
         # Resolve all paths to absolute
         resolved_dirs = []
@@ -66,6 +67,16 @@ class SandboxManager:
             str(Path.home() / ".google_calendar_credentials.json"),  # Google Calendar credentials
             str(Path.home() / ".google_calendar_token.json"),  # Google Calendar OAuth token
         ]
+
+        # Add gh and git config directories if git operations are needed
+        if needs_git:
+            gh_config_dir = str(Path.home() / ".config" / "gh")
+            if Path(gh_config_dir).exists():
+                temp_dirs.append(gh_config_dir)  # gh CLI needs to write tokens/cache
+
+            git_config_file = str(Path.home() / ".gitconfig")
+            if Path(git_config_file).exists():
+                allowed_files.append(git_config_file)  # git may need to update config
 
         # Combine and deduplicate
         all_allowed_dirs = list(set(resolved_dirs + temp_dirs))
