@@ -17,7 +17,6 @@ from ..core.task_planner import TaskPlanner
 from ..core.agent_manager import AgentManager
 from ..core.logger import NightShiftLogger
 from ..core.config import Config
-from ..core.output_viewer import OutputViewer
 
 
 # Initialize rich console for pretty output
@@ -53,11 +52,9 @@ def cli(ctx):
 @click.argument('description')
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
-@click.option('--allow-dir', multiple=True, help='Additional directories to allow writes (can be specified multiple times)')
-@click.option('--debug', is_flag=True, help='Show full command and sandbox profile')
 @click.pass_context
-def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
-    """Submit a new task (with sandbox isolation on macOS)"""
+def submit(ctx, description, auto_approve, planning_timeout):
+    """Submit a new task"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
     task_planner = ctx.obj['task_planner']
@@ -72,22 +69,11 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
         # Generate unique task ID
         task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-        # Merge planner's suggested directories with user-provided ones
-        allowed_directories = list(plan.get('allowed_directories', []))
-        if allow_dir:
-            # Convert relative paths to absolute
-            for dir_path in allow_dir:
-                abs_path = str(Path(dir_path).resolve())
-                if abs_path not in allowed_directories:
-                    allowed_directories.append(abs_path)
-
         # Create task in STAGED state
         task = task_queue.create_task(
             task_id=task_id,
             description=plan['enhanced_prompt'],
             allowed_tools=plan['allowed_tools'],
-            allowed_directories=allowed_directories,
-            needs_git=plan.get('needs_git', False),
             system_prompt=plan['system_prompt'],
             estimated_tokens=plan['estimated_tokens'],
             estimated_time=plan['estimated_time']
@@ -96,19 +82,12 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
         logger.log_task_created(task_id, description)
 
         # Display plan
-        console.print(f"\n[bold green]✓ Task created:[/bold green] {task_id}")
-
-        # Format directories display
-        dirs_display = "\n".join(f"  • {d}" for d in allowed_directories) if allowed_directories else "  (none)"
-
-        # Add git status if enabled
-        git_status = " + git support (device files)" if plan.get('needs_git', False) else ""
+        console.print(f"\n[bold green]Task created:[/bold green] {task_id}")
 
         panel = Panel.fit(
             f"[yellow]Original:[/yellow] {description}\n\n"
             f"[yellow]Enhanced prompt:[/yellow] {plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(plan['allowed_tools'])}\n\n"
-            f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}{git_status}\n\n"
             f"[yellow]Estimated:[/yellow] ~{plan['estimated_tokens']} tokens, ~{plan['estimated_time']}s\n\n"
             f"[yellow]Reasoning:[/yellow] {plan.get('reasoning', 'N/A')}",
             title=f"Task Plan: {task_id}",
@@ -121,56 +100,18 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
             task_queue.update_status(task_id, TaskStatus.COMMITTED)
             logger.log_task_approved(task_id)
 
-            # Show debug info if requested
-            if debug:
-                # Get the command that will be executed
-                from ..core.sandbox import SandboxManager
-                cmd_parts = [agent_manager.claude_bin, "-p"]
-                cmd_parts.append(f'"{task.description}"')
-                cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
-                if task.allowed_tools:
-                    cmd_parts.append(f"--allowed-tools {' '.join(task.allowed_tools)}")
-                claude_cmd = " ".join(cmd_parts)
-
-                if agent_manager.sandbox:
-                    # Show sandbox profile (all tasks are sandboxed when sandbox is enabled)
-                    temp_sandbox = SandboxManager()
-                    profile_path = temp_sandbox.create_profile(
-                        task.allowed_directories or [],  # Empty list for read-only tasks
-                        f"{task_id}_debug",
-                        needs_git=bool(task.needs_git)
-                    )
-
-                    console.print("\n[bold cyan]🔍 Debug Information[/bold cyan]")
-                    console.print(f"[dim]Sandbox profile: {profile_path}[/dim]\n")
-
-                    with open(profile_path) as f:
-                        profile_content = f.read()
-
-                    syntax = Syntax(profile_content, "scheme", theme="monokai", line_numbers=True)
-                    console.print(Panel(syntax, title="Sandbox Profile", border_style="cyan"))
-
-                    wrapped_cmd = f'sandbox-exec -f "{profile_path}" {claude_cmd}'
-                    console.print(f"\n[bold cyan]Full command:[/bold cyan]")
-                    console.print(f"[dim]{wrapped_cmd}[/dim]\n")
-
-                    temp_sandbox.cleanup()
-                else:
-                    console.print(f"\n[bold cyan]🔍 Debug - Full command:[/bold cyan]")
-                    console.print(f"[dim]{claude_cmd}[/dim]\n")
-
-            console.print(f"\n[bold blue]▶ Executing task...[/bold blue]\n")
+            console.print(f"\n[bold blue]Executing task...[/bold blue]\n")
             result = agent_manager.execute_task(task)
 
             if result['success']:
-                console.print(f"\n[bold green]✓ Task completed successfully![/bold green]")
+                console.print(f"\n[bold green]Task completed successfully![/bold green]")
                 console.print(f"Token usage: {result.get('token_usage', 'N/A')}")
                 console.print(f"Execution time: {result['execution_time']:.1f}s")
                 console.print(f"Results saved to: {result.get('result_path', 'N/A')}")
             else:
-                console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}")
+                console.print(f"\n[bold red]Task failed:[/bold red] {result.get('error')}")
         else:
-            console.print(f"\n[dim]⏸  Status:[/dim] STAGED (waiting for approval)")
+            console.print(f"\n[dim]Status:[/dim] STAGED (waiting for approval)")
             console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
             console.print(f"[dim]Or 'nightshift revise {task_id} \"feedback\"' to request changes[/dim]\n")
 
@@ -256,18 +197,18 @@ def approve(ctx, task_id):
     task_queue.update_status(task_id, TaskStatus.COMMITTED)
     logger.log_task_approved(task_id)
 
-    console.print(f"\n[bold green]✓ Task approved:[/bold green] {task_id}")
-    console.print(f"\n[bold blue]▶ Executing...[/bold blue]\n")
+    console.print(f"\n[bold green]Task approved:[/bold green] {task_id}")
+    console.print(f"\n[bold blue]Executing...[/bold blue]\n")
 
     result = agent_manager.execute_task(task)
 
     if result['success']:
-        console.print(f"\n[bold green]✓ Task completed successfully![/bold green]")
+        console.print(f"\n[bold green]Task completed successfully![/bold green]")
         console.print(f"Token usage: {result.get('token_usage', 'N/A')}")
         console.print(f"Execution time: {result['execution_time']:.1f}s")
         console.print(f"Results saved to: {result.get('result_path', 'N/A')}\n")
     else:
-        console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}\n")
+        console.print(f"\n[bold red]Task failed:[/bold red] {result.get('error')}\n")
 
 
 @cli.command()
@@ -368,118 +309,11 @@ def revise(ctx, task_id, feedback):
         task_queue.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
 
         # Display revised plan
-        console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
+        console.print(f"\n[bold green]Plan revised:[/bold green] {task_id}")
 
         panel = Panel.fit(
             f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
-            f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
-            title=f"Revised Plan: {task_id}",
-            border_style="green"
-        )
-        console.print(panel)
-
-        console.print(f"\n[dim]Status:[/dim] STAGED (waiting for approval)")
-        console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
-        console.print(f"[dim]Or 'nightshift revise {task_id} \"more feedback\"' to revise again[/dim]\n")
-
-    except Exception as e:
-        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
-        logger.error(f"Plan revision failed for {task_id}: {str(e)}")
-        raise click.Abort()
-
-
-@cli.command()
-@click.argument('task_id')
-@click.pass_context
-def display(ctx, task_id):
-    """Display task execution output in human-readable format"""
-    task_queue = ctx.obj['task_queue']
-    config = ctx.obj['config']
-
-    # Get task
-    task = task_queue.get_task(task_id)
-    if not task:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} not found\n")
-        raise click.Abort()
-
-    # Check if task has output
-    if not task.result_path:
-        console.print(f"\n[bold yellow]Warning:[/bold yellow] Task {task_id} has no output yet\n")
-        console.print(f"[dim]Current status: {task.status}[/dim]\n")
-        raise click.Abort()
-
-    # Use OutputViewer to display the execution
-    viewer = OutputViewer()
-    console.print()  # Add spacing
-    viewer.display_task_output(task.result_path)
-
-
-@cli.command()
-@click.argument('task_id')
-@click.argument('feedback')
-@click.pass_context
-def revise(ctx, task_id, feedback):
-    """Request plan revision with feedback for a staged task"""
-    logger = ctx.obj['logger']
-    task_queue = ctx.obj['task_queue']
-    task_planner = ctx.obj['task_planner']
-
-    # Get task
-    task = task_queue.get_task(task_id)
-    if not task:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} not found\n")
-        raise click.Abort()
-
-    if task.status != TaskStatus.STAGED.value:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} is not in STAGED state (current: {task.status})\n")
-        console.print(f"[dim]Only staged tasks can be revised[/dim]\n")
-        raise click.Abort()
-
-    console.print(f"\n[bold blue]Revising plan based on feedback...[/bold blue]")
-
-    try:
-        # Build current plan from task
-        current_plan = {
-            'enhanced_prompt': task.description,
-            'allowed_tools': task.allowed_tools or [],
-            'allowed_directories': task.allowed_directories or [],
-            'system_prompt': task.system_prompt or '',
-            'estimated_tokens': task.estimated_tokens or 0,
-            'estimated_time': task.estimated_time or 0
-        }
-
-        # Use Claude to refine the plan
-        revised_plan = task_planner.refine_plan(current_plan, feedback)
-
-        # Update task with revised plan
-        success = task_queue.update_plan(
-            task_id=task_id,
-            description=revised_plan['enhanced_prompt'],
-            allowed_tools=revised_plan['allowed_tools'],
-            allowed_directories=revised_plan['allowed_directories'],
-            system_prompt=revised_plan['system_prompt'],
-            estimated_tokens=revised_plan['estimated_tokens'],
-            estimated_time=revised_plan['estimated_time']
-        )
-
-        if not success:
-            console.print(f"\n[bold red]Error:[/bold red] Failed to update task plan\n")
-            raise click.Abort()
-
-        task_queue.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
-
-        # Display revised plan
-        console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
-
-        # Format directories display
-        dirs_display = "\n".join(f"  • {d}" for d in revised_plan.get('allowed_directories', [])) if revised_plan.get('allowed_directories') else "  (none)"
-
-        panel = Panel.fit(
-            f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
-            f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
-            f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}\n\n"
             f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
             f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
             title=f"Revised Plan: {task_id}",
@@ -514,7 +348,7 @@ def cancel(ctx, task_id):
         raise click.Abort()
 
     task_queue.update_status(task_id, TaskStatus.CANCELLED)
-    console.print(f"\n[bold yellow]✓ Task cancelled:[/bold yellow] {task_id}\n")
+    console.print(f"\n[bold yellow]Task cancelled:[/bold yellow] {task_id}\n")
 
 
 @cli.command()
@@ -836,11 +670,11 @@ def clear(ctx, confirm):
     config = ctx.obj['config']
 
     if not confirm:
-        console.print(f"\n[bold yellow]⚠️  Warning:[/bold yellow] This will delete all NightShift data:")
-        console.print(f"  • Database: {config.get_database_path()}")
-        console.print(f"  • Logs: {config.get_log_dir()}")
-        console.print(f"  • Outputs: {config.get_output_dir()}")
-        console.print(f"  • Notifications: {config.get_notifications_dir()}")
+        console.print(f"\n[bold yellow]Warning:[/bold yellow] This will delete all NightShift data:")
+        console.print(f"  - Database: {config.get_database_path()}")
+        console.print(f"  - Logs: {config.get_log_dir()}")
+        console.print(f"  - Outputs: {config.get_output_dir()}")
+        console.print(f"  - Notifications: {config.get_notifications_dir()}")
 
         response = click.confirm("\nAre you sure you want to continue?", default=False)
         if not response:
@@ -851,7 +685,7 @@ def clear(ctx, confirm):
     import shutil
     if config.base_dir.exists():
         shutil.rmtree(config.base_dir)
-        console.print(f"\n[bold green]✓ Cleared all NightShift data[/bold green]\n")
+        console.print(f"\n[bold green]Cleared all NightShift data[/bold green]\n")
     else:
         console.print(f"\n[dim]Nothing to clear[/dim]\n")
 

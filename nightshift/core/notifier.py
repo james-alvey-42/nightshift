@@ -106,11 +106,10 @@ class Notifier:
     def _display_terminal(self, summary: Dict[str, Any]):
         """Display notification in terminal"""
 
-        status_emoji = "✅" if summary["status"] == "success" else "❌"
         status_color = "green" if summary["status"] == "success" else "red"
 
         # Build notification text
-        notification_text = f"## {status_emoji} Task Completed: {summary['task_id']}\n\n"
+        notification_text = f"## Task Completed: {summary['task_id']}\n\n"
         notification_text += f"**Description:** {summary['description'][:100]}...\n\n"
         notification_text += f"**Status:** [{status_color}]{summary['status'].upper()}[/{status_color}]\n\n"
         notification_text += f"**Execution Time:** {summary['execution_time']:.1f}s\n\n"
@@ -126,7 +125,7 @@ class Notifier:
             if file_changes['created']:
                 notification_text += f"**Created ({len(file_changes['created'])}):**\n"
                 for f in file_changes['created'][:5]:
-                    notification_text += f"- ✨ {f}\n"
+                    notification_text += f"- {f}\n"
                 if len(file_changes['created']) > 5:
                     notification_text += f"- ... and {len(file_changes['created']) - 5} more\n"
                 notification_text += "\n"
@@ -134,7 +133,7 @@ class Notifier:
             if file_changes['modified']:
                 notification_text += f"**Modified ({len(file_changes['modified'])}):**\n"
                 for f in file_changes['modified'][:5]:
-                    notification_text += f"- ✏️  {f}\n"
+                    notification_text += f"- {f}\n"
                 if len(file_changes['modified']) > 5:
                     notification_text += f"- ... and {len(file_changes['modified']) - 5} more\n"
                 notification_text += "\n"
@@ -142,7 +141,7 @@ class Notifier:
             if file_changes['deleted']:
                 notification_text += f"**Deleted ({len(file_changes['deleted'])}):**\n"
                 for f in file_changes['deleted'][:5]:
-                    notification_text += f"- 🗑️  {f}\n"
+                    notification_text += f"- {f}\n"
                 if len(file_changes['deleted']) > 5:
                     notification_text += f"- ... and {len(file_changes['deleted']) - 5} more\n"
                 notification_text += "\n"
