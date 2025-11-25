@@ -42,6 +42,7 @@ class SandboxManager:
         - Always allows writes to /tmp and /private/tmp for temp files
         - Optionally allows device files (/dev/null, /dev/tty) if needs_git is True
         - Optionally allows ~/.config/gh/ for gh CLI token management if needs_git is True
+        - Optionally allows macOS Keychain access for gh CLI authentication if needs_git is True
         """
         # Resolve all paths to absolute
         resolved_dirs = []
@@ -111,7 +112,7 @@ class SandboxManager:
         for file_path in sorted(allowed_files):
             profile_lines.append(f'(allow file-write* (literal "{file_path}"))')
 
-        # Add device file access if needed for git
+        # Add device file access and keychain access if needed for git/gh
         if needs_git:
             profile_lines.append("")
             profile_lines.append(";; Allow device files needed for git operations")
@@ -119,6 +120,11 @@ class SandboxManager:
             profile_lines.append('(allow file-read* file-write* (literal "/dev/tty"))')
             profile_lines.append('(allow file-read* (literal "/dev/random"))')
             profile_lines.append('(allow file-read* (literal "/dev/urandom"))')
+            profile_lines.append("")
+            profile_lines.append(";; Allow keychain access for gh CLI token management")
+            profile_lines.append('(allow authorization-right-obtain)')
+            profile_lines.append('(allow mach-lookup (global-name "com.apple.SecurityServer"))')
+            profile_lines.append('(allow mach-lookup (global-name "com.apple.security.syspolicy"))')
 
         profile_lines.append("")
         profile_lines.append(";; Allow writes to specified directories")
