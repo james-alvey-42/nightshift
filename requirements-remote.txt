@@ -1,0 +1,23 @@
+# Optional dependencies for remote trigger and cloud execution features
+
+# Web framework for webhook server
+flask>=2.3.0
+gunicorn>=21.2.0
+
+# YAML configuration
+PyYAML>=6.0
+
+# HTTP requests for platform integrations
+requests>=2.31.0
+
+# Cloud provider SDKs (optional, install as needed)
+# google-cloud-run>=0.9.0
+# google-cloud-storage>=2.10.0
+# boto3>=1.28.0  # AWS
+# azure-functions>=1.17.0  # Azure
+
+# Cryptography for signature verification
+cryptography>=41.0.0
+
+# Discord signature verification (optional)
+# PyNaCl>=1.5.0

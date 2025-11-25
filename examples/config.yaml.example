@@ -1,0 +1,108 @@
+# Example NightShift Configuration
+# Copy to ~/.nightshift/config.yaml and customize
+
+remote:
+  # Enable remote trigger service
+  enabled: false
+
+  trigger_service:
+    platforms:
+      # Slack integration
+      slack:
+        enabled: false
+        bot_token: ${SLACK_BOT_TOKEN}  # xoxb-your-token
+        signing_secret: ${SLACK_SIGNING_SECRET}
+
+      # WhatsApp Business API (not yet implemented)
+      whatsapp:
+        enabled: false
+        # phone_number_id: your-phone-number-id
+        # access_token: your-access-token
+        # verify_token: your-verify-token
+
+      # Telegram Bot API (not yet implemented)
+      telegram:
+        enabled: false
+        # bot_token: your-bot-token
+
+      # Discord Bot (not yet implemented)
+      discord:
+        enabled: false
+        # bot_token: your-bot-token
+        # public_key: your-public-key
+
+    # Public webhook URL (use ngrok for local testing)
+    webhook_url: ${NIGHTSHIFT_WEBHOOK_URL}
+
+  execution:
+    # Execution mode: local, docker, cloud
+    mode: local
+
+    # Cloud provider: gcp, aws, azure
+    cloud_provider: gcp
+
+    # Google Cloud Platform configuration
+    gcp:
+      project: ${GCP_PROJECT}
+      region: us-central1
+      service_account: ${GCP_SERVICE_ACCOUNT}
+      image: gcr.io/${GCP_PROJECT}/nightshift:latest
+      storage_bucket: gs://nightshift-results
+      memory: 2Gi
+      cpu: 2
+      timeout: 3600
+
+    # AWS configuration
+    aws:
+      function_name: nightshift-executor
+      region: us-east-1
+      role_arn: ${AWS_ROLE_ARN}
+      storage_bucket: s3://nightshift-results
+      memory: 2048
+      timeout: 900
+
+    # Azure configuration
+    azure:
+      function_app: nightshift-executor
+      region: eastus
+      resource_group: nightshift-resources
+      storage_account: nightshiftresults
+
+  storage:
+    # Database backend: sqlite, cloud_sql, rds, azure_db
+    database: sqlite
+
+    # Results storage bucket (for cloud execution)
+    results_bucket: ${RESULTS_BUCKET}
+
+  auth:
+    # Authentication method: api_key, oauth2, jwt, platform_signature
+    method: platform_signature
+
+    # API keys (for direct API access)
+    api_keys:
+      # sk_test_alice_12345: user_alice
+      # sk_test_bob_67890: user_bob
+
+    # Platform signing secrets
+    platform_secrets:
+      slack: ${SLACK_SIGNING_SECRET}
+      whatsapp: ${WHATSAPP_SECRET}
+      telegram: ${TELEGRAM_BOT_TOKEN}
+      discord: ${DISCORD_PUBLIC_KEY}
+
+    # Allowed users (optional, empty = allow all)
+    allowed_users: []
+      # - slack:U12345678
+      # - whatsapp:+1234567890
+
+# Local execution settings (always available)
+local:
+  # Claude CLI path (auto-detected if not specified)
+  claude_path: claude
+
+  # Working directory for task execution
+  working_dir: ${HOME}/nightshift-workspace
+
+  # Maximum concurrent tasks
+  max_concurrent_tasks: 3
