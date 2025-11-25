@@ -106,6 +106,11 @@ Guidelines:
   * NEVER allow "/" or home directory unless explicitly required
 - Default to current directory if uncertain, but explain in reasoning
 - The sandbox automatically allows /tmp for temporary files (no need to specify)
+
+**SYSTEM PROMPT - Working Directory (CRITICAL):**
+- The system_prompt MUST instruct the executor to work within allowed_directories, NOT /tmp
+- Include this directive: "IMPORTANT: Do all work in the current working directory or specified output paths. Do NOT use /tmp for task outputs unless specifically required for temporary intermediate files."
+- The executor should save all final outputs to the working directory or explicitly specified paths
 """
 
         try:
@@ -256,6 +261,7 @@ Guidelines:
 - Update estimates based on scope changes
 - Explain what changed in the reasoning field
 - **SECURITY**: Only allow write access to minimum required directories (use absolute paths)
+- **SYSTEM PROMPT**: Instruct executor to work in allowed_directories, NOT /tmp. Include: "IMPORTANT: Do all work in the current working directory or specified output paths. Do NOT use /tmp for task outputs unless specifically required for temporary intermediate files."
 """
 
         try:
