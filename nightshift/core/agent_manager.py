@@ -5,6 +5,7 @@ Spawns claude CLI with specific configurations per task
 import subprocess
 import json
 import time
+import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -81,13 +82,33 @@ class AgentManager:
 
             self.logger.log_task_started(task.task_id, cmd)
 
+            # Set up environment variables
+            env = dict(os.environ)
+
+            # If needs_git, try to get gh token for sandbox compatibility
+            if task.needs_git:
+                # Try to get gh token from gh CLI
+                try:
+                    token_result = subprocess.run(
+                        ["gh", "auth", "token"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if token_result.returncode == 0:
+                        env['GH_TOKEN'] = token_result.stdout.strip()
+                        self.logger.info("Loaded GH_TOKEN from gh CLI for sandbox compatibility")
+                except Exception as e:
+                    self.logger.warning(f"Could not load GH_TOKEN: {e}")
+
             # Execute with timeout (no timeout for debugging)
             result = subprocess.run(
                 cmd,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=timeout  # Only use explicit timeout, no default
+                timeout=timeout,  # Only use explicit timeout, no default
+                env=env
             )
 
             execution_time = time.time() - start_time

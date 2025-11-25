@@ -91,20 +91,21 @@ class SandboxManager:
             "(deny default)",
             "",
             ";; Allow process execution and basic operations",
-            "(allow process-exec*)",
-            "(allow process-fork)",
-            "(allow signal)",
-            "(allow sysctl-read)",
+            "(allow process*)",
             "",
             ";; Allow reading all files",
             "(allow file-read*)",
             "",
+            ";; Allow mach and sysctl operations",
+            "(allow mach-lookup)",
+            "(allow sysctl*)",
+            "(allow system-socket)",
+            "(allow ipc-posix-shm)",
+            "(allow mach*)",
+            "",
             ";; Allow network access",
             "(allow network*)",
-            "",
-            ";; Allow IPC for subprocess communication",
-            "(allow ipc*)",
-            "(allow mach*)",
+            "(allow network-outbound (remote tcp))",
             "",
             ";; Allow writes to specific files",
         ]
@@ -112,19 +113,21 @@ class SandboxManager:
         for file_path in sorted(allowed_files):
             profile_lines.append(f'(allow file-write* (literal "{file_path}"))')
 
-        # Add device file access and keychain access if needed for git/gh
+        # Add device file access and network services if needed for git/gh
         if needs_git:
             profile_lines.append("")
-            profile_lines.append(";; Allow device files needed for git operations")
-            profile_lines.append('(allow file-read* file-write* (literal "/dev/null"))')
-            profile_lines.append('(allow file-read* file-write* (literal "/dev/tty"))')
-            profile_lines.append('(allow file-read* (literal "/dev/random"))')
-            profile_lines.append('(allow file-read* (literal "/dev/urandom"))')
+            profile_lines.append(";; Allow device files needed for git/gh operations")
+            profile_lines.append('(allow file-write* (literal "/dev/null"))')
+            profile_lines.append('(allow file-write* (literal "/dev/stdout"))')
+            profile_lines.append('(allow file-write* (literal "/dev/stderr"))')
+            profile_lines.append('(allow file-write* (literal "/dev/dtracehelper"))')
             profile_lines.append("")
-            profile_lines.append(";; Allow keychain access for gh CLI token management")
-            profile_lines.append('(allow authorization-right-obtain)')
+            profile_lines.append(";; Allow network services for gh CLI (HTTPS/SSH)")
             profile_lines.append('(allow mach-lookup (global-name "com.apple.SecurityServer"))')
-            profile_lines.append('(allow mach-lookup (global-name "com.apple.security.syspolicy"))')
+            profile_lines.append('(allow mach-lookup (global-name "com.apple.dnssd.service"))')
+            profile_lines.append('(allow mach-lookup (global-name "com.apple.trustd"))')
+            profile_lines.append('(allow mach-lookup (global-name "com.apple.nsurlsessiond"))')
+            profile_lines.append('(allow ipc-posix-shm-read* (ipc-posix-name "apple.shm.notification_center"))')
 
         profile_lines.append("")
         profile_lines.append(";; Allow writes to specified directories")
