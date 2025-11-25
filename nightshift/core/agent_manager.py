@@ -6,6 +6,8 @@ import subprocess
 import json
 import time
 import os
+import signal
+import fcntl
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -59,9 +61,6 @@ class AgentManager:
         """
         start_time = time.time()
 
-        # Update task status to RUNNING
-        self.task_queue.update_status(task.task_id, TaskStatus.RUNNING)
-
         # Start file tracking
         file_tracker = FileTracker()
         file_tracker.start_tracking()
@@ -101,23 +100,134 @@ class AgentManager:
                 except Exception as e:
                     self.logger.warning(f"Could not load GH_TOKEN: {e}")
 
-            # Execute with timeout (no timeout for debugging)
-            result = subprocess.run(
+            # Create output file path immediately
+            output_file = self.output_dir / f"{task.task_id}_output.json"
+
+            # Execute with Popen to get PID immediately
+            process = subprocess.Popen(
                 cmd,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,  # Only use explicit timeout, no default
                 env=env
             )
 
+            # Store PID and result path in task metadata immediately
+            self.task_queue.update_status(
+                task.task_id,
+                TaskStatus.RUNNING,
+                process_id=process.pid,
+                result_path=str(output_file)
+            )
+            self.logger.info(f"Task {task.task_id} executing with PID: {process.pid}")
+
+            # Initialize output file with metadata
+            with open(output_file, "w") as f:
+                json.dump({
+                    "task_id": task.task_id,
+                    "command": cmd,
+                    "stdout": "",
+                    "stderr": "",
+                    "returncode": None,
+                    "execution_time": None,
+                    "status": "running"
+                }, f, indent=2)
+
+            # Stream output to file in real-time
+            stdout_lines = []
+            stderr_lines = []
+
+            # Set non-blocking mode on stdout and stderr
+            if process.stdout:
+                flags = fcntl.fcntl(process.stdout.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(process.stdout.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            if process.stderr:
+                flags = fcntl.fcntl(process.stderr.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(process.stderr.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+            # Wait for completion while streaming output
+            try:
+                while True:
+                    # Check if process is still running
+                    returncode = process.poll()
+
+                    # Read available stdout
+                    if process.stdout:
+                        try:
+                            line = process.stdout.readline()
+                            if line:
+                                stdout_lines.append(line)
+                                # Update file with partial output
+                                with open(output_file, "w") as f:
+                                    json.dump({
+                                        "task_id": task.task_id,
+                                        "command": cmd,
+                                        "stdout": "".join(stdout_lines),
+                                        "stderr": "".join(stderr_lines),
+                                        "returncode": returncode,
+                                        "execution_time": time.time() - start_time,
+                                        "status": "running" if returncode is None else "completed"
+                                    }, f, indent=2)
+                        except:
+                            pass
+
+                    # Read available stderr
+                    if process.stderr:
+                        try:
+                            line = process.stderr.readline()
+                            if line:
+                                stderr_lines.append(line)
+                        except:
+                            pass
+
+                    # Exit if process completed
+                    if returncode is not None:
+                        # Read any remaining output
+                        if process.stdout:
+                            remaining = process.stdout.read()
+                            if remaining:
+                                stdout_lines.append(remaining)
+                        if process.stderr:
+                            remaining = process.stderr.read()
+                            if remaining:
+                                stderr_lines.append(remaining)
+                        break
+
+                    # Small sleep to avoid busy waiting
+                    time.sleep(0.1)
+
+                    # Check timeout
+                    if timeout and (time.time() - start_time) > timeout:
+                        process.kill()
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                stdout_lines.append(stdout)
+                stderr_lines.append(stderr)
+                raise
+
             execution_time = time.time() - start_time
+
+            # Combine output
+            stdout = "".join(stdout_lines)
+            stderr = "".join(stderr_lines)
+
+            # Create a result object similar to subprocess.run
+            class Result:
+                def __init__(self, stdout, stderr, returncode):
+                    self.stdout = stdout
+                    self.stderr = stderr
+                    self.returncode = returncode
+
+            result = Result(stdout, stderr, returncode)
 
             # Parse output
             output_data = self._parse_output(result.stdout, result.stderr)
 
-            # Save full output to file
-            output_file = self.output_dir / f"{task.task_id}_output.json"
+            # Save final output to file
             with open(output_file, "w") as f:
                 json.dump({
                     "task_id": task.task_id,
@@ -125,7 +235,8 @@ class AgentManager:
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "returncode": result.returncode,
-                    "execution_time": execution_time
+                    "execution_time": execution_time,
+                    "status": "completed"
                 }, f, indent=2)
 
             # Log agent output
@@ -383,3 +494,180 @@ class AgentManager:
             "estimated_tokens": estimated_tokens,
             "estimated_time": estimated_time
         }
+
+    def pause_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Pause a running task by sending SIGSTOP to its subprocess
+
+        Returns:
+            Dict with keys: success, message, error
+        """
+        # Get task
+        task = self.task_queue.get_task(task_id)
+        if not task:
+            return {
+                "success": False,
+                "error": f"Task {task_id} not found"
+            }
+
+        # Verify task is running
+        if task.status != TaskStatus.RUNNING.value:
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not running (current status: {task.status})"
+            }
+
+        # Verify we have a PID
+        if not task.process_id:
+            return {
+                "success": False,
+                "error": f"Task {task_id} has no process ID stored"
+            }
+
+        # Verify process is still alive
+        try:
+            os.kill(task.process_id, 0)  # Signal 0 checks if process exists
+        except ProcessLookupError:
+            return {
+                "success": False,
+                "error": f"Process {task.process_id} no longer exists"
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"No permission to signal process {task.process_id}"
+            }
+
+        # Send SIGSTOP to pause the process
+        try:
+            os.kill(task.process_id, signal.SIGSTOP)
+            self.task_queue.update_status(task_id, TaskStatus.PAUSED)
+            self.logger.info(f"Paused task {task_id} (PID: {task.process_id})")
+            return {
+                "success": True,
+                "message": f"Task {task_id} paused successfully"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to pause task: {str(e)}"
+            }
+
+    def resume_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Resume a paused task by sending SIGCONT to its subprocess
+
+        Returns:
+            Dict with keys: success, message, error
+        """
+        # Get task
+        task = self.task_queue.get_task(task_id)
+        if not task:
+            return {
+                "success": False,
+                "error": f"Task {task_id} not found"
+            }
+
+        # Verify task is paused
+        if task.status != TaskStatus.PAUSED.value:
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not paused (current status: {task.status})"
+            }
+
+        # Verify we have a PID
+        if not task.process_id:
+            return {
+                "success": False,
+                "error": f"Task {task_id} has no process ID stored"
+            }
+
+        # Verify process is still alive
+        try:
+            os.kill(task.process_id, 0)  # Signal 0 checks if process exists
+        except ProcessLookupError:
+            return {
+                "success": False,
+                "error": f"Process {task.process_id} no longer exists"
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"No permission to signal process {task.process_id}"
+            }
+
+        # Send SIGCONT to resume the process
+        try:
+            os.kill(task.process_id, signal.SIGCONT)
+            self.task_queue.update_status(task_id, TaskStatus.RUNNING)
+            self.logger.info(f"Resumed task {task_id} (PID: {task.process_id})")
+            return {
+                "success": True,
+                "message": f"Task {task_id} resumed successfully"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to resume task: {str(e)}"
+            }
+
+    def kill_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Kill a running or paused task by sending SIGKILL to its subprocess
+
+        Returns:
+            Dict with keys: success, message, error
+        """
+        # Get task
+        task = self.task_queue.get_task(task_id)
+        if not task:
+            return {
+                "success": False,
+                "error": f"Task {task_id} not found"
+            }
+
+        # Verify task is running or paused
+        if task.status not in [TaskStatus.RUNNING.value, TaskStatus.PAUSED.value]:
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not running or paused (current status: {task.status})"
+            }
+
+        # Verify we have a PID
+        if not task.process_id:
+            return {
+                "success": False,
+                "error": f"Task {task_id} has no process ID stored"
+            }
+
+        # Check if process still exists
+        try:
+            os.kill(task.process_id, 0)  # Signal 0 checks if process exists
+        except ProcessLookupError:
+            # Process already dead, just update status
+            self.task_queue.update_status(task_id, TaskStatus.CANCELLED, error_message="Process already terminated")
+            self.logger.info(f"Task {task_id} process {task.process_id} already terminated")
+            return {
+                "success": True,
+                "message": f"Task {task_id} process was already terminated. Status updated to CANCELLED."
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"No permission to signal process {task.process_id}"
+            }
+
+        # Send SIGKILL to forcefully terminate the process
+        try:
+            os.kill(task.process_id, signal.SIGKILL)
+            self.task_queue.update_status(task_id, TaskStatus.CANCELLED, error_message="Task killed by user")
+            self.logger.info(f"Killed task {task_id} (PID: {task.process_id})")
+            return {
+                "success": True,
+                "message": f"Task {task_id} killed successfully (PID: {task.process_id})"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to kill task: {str(e)}"
+            }

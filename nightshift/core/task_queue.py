@@ -16,6 +16,7 @@ class TaskStatus(Enum):
     STAGED = "staged"           # Created, awaiting approval
     COMMITTED = "committed"     # Approved, ready to execute
     RUNNING = "running"         # Currently executing
+    PAUSED = "paused"           # Execution paused
     COMPLETED = "completed"     # Successfully finished
     FAILED = "failed"           # Execution failed
     CANCELLED = "cancelled"     # User cancelled
@@ -42,6 +43,7 @@ class Task:
     error_message: Optional[str] = None
     token_usage: Optional[int] = None
     execution_time: Optional[float] = None  # seconds
+    process_id: Optional[int] = None  # PID of Claude subprocess
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -78,16 +80,22 @@ class TaskQueue:
                     result_path TEXT,
                     error_message TEXT,
                     token_usage INTEGER,
-                    execution_time REAL
+                    execution_time REAL,
+                    process_id INTEGER  -- PID of Claude subprocess
                 )
             """)
 
-            # Migration: Add needs_git column if it doesn't exist
+            # Migrations
             cursor = conn.cursor()
             cursor.execute("PRAGMA table_info(tasks)")
             columns = [row[1] for row in cursor.fetchall()]
+
             if 'needs_git' not in columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN needs_git INTEGER")
+                conn.commit()
+
+            if 'process_id' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN process_id INTEGER")
                 conn.commit()
 
             conn.execute("""
@@ -189,7 +197,8 @@ class TaskQueue:
                 result_path=row["result_path"],
                 error_message=row["error_message"],
                 token_usage=row["token_usage"],
-                execution_time=row["execution_time"]
+                execution_time=row["execution_time"],
+                process_id=row["process_id"]
             )
 
     def list_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
@@ -227,7 +236,8 @@ class TaskQueue:
                     result_path=row["result_path"],
                     error_message=row["error_message"],
                     token_usage=row["token_usage"],
-                    execution_time=row["execution_time"]
+                    execution_time=row["execution_time"],
+                    process_id=row["process_id"]
                 ))
 
             return tasks
@@ -255,7 +265,7 @@ class TaskQueue:
 
         # Add any additional fields from kwargs
         for key, value in kwargs.items():
-            if key in ["result_path", "error_message", "token_usage", "execution_time"]:
+            if key in ["result_path", "error_message", "token_usage", "execution_time", "process_id"]:
                 update_fields.append(f"{key} = ?")
                 values.append(value)
 

@@ -4,6 +4,7 @@ Provides commands for task submission, approval, and monitoring
 """
 import click
 import uuid
+import os
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -180,7 +181,7 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
 
 
 @cli.command()
-@click.option('--status', type=click.Choice(['staged', 'committed', 'running', 'completed', 'failed', 'cancelled']),
+@click.option('--status', type=click.Choice(['staged', 'committed', 'running', 'paused', 'completed', 'failed', 'cancelled']),
               help='Filter by status')
 @click.pass_context
 def queue(ctx, status):
@@ -213,6 +214,7 @@ def queue(ctx, status):
             "staged": "yellow",
             "committed": "blue",
             "running": "cyan",
+            "paused": "magenta",
             "completed": "green",
             "failed": "red",
             "cancelled": "dim"
@@ -513,6 +515,172 @@ def cancel(ctx, task_id):
 
     task_queue.update_status(task_id, TaskStatus.CANCELLED)
     console.print(f"\n[bold yellow]✓ Task cancelled:[/bold yellow] {task_id}\n")
+
+
+@cli.command()
+@click.argument('task_id')
+@click.pass_context
+def pause(ctx, task_id):
+    """Pause a running task"""
+    agent_manager = ctx.obj['agent_manager']
+
+    result = agent_manager.pause_task(task_id)
+
+    if result['success']:
+        console.print(f"\n[bold yellow]⏸  Task paused:[/bold yellow] {task_id}")
+        console.print(f"[dim]{result['message']}[/dim]")
+        console.print(f"[dim]Run 'nightshift resume {task_id}' to continue execution[/dim]\n")
+    else:
+        console.print(f"\n[bold red]Error:[/bold red] {result['error']}\n")
+        raise click.Abort()
+
+
+@cli.command()
+@click.argument('task_id')
+@click.pass_context
+def resume(ctx, task_id):
+    """Resume a paused task"""
+    agent_manager = ctx.obj['agent_manager']
+
+    result = agent_manager.resume_task(task_id)
+
+    if result['success']:
+        console.print(f"\n[bold green]▶  Task resumed:[/bold green] {task_id}")
+        console.print(f"[dim]{result['message']}[/dim]")
+        console.print(f"[dim]Task is now running. Use 'nightshift watch {task_id}' to monitor progress[/dim]\n")
+    else:
+        console.print(f"\n[bold red]Error:[/bold red] {result['error']}\n")
+        raise click.Abort()
+
+
+@cli.command()
+@click.argument('task_id')
+@click.pass_context
+def kill(ctx, task_id):
+    """Kill a running or paused task"""
+    agent_manager = ctx.obj['agent_manager']
+
+    result = agent_manager.kill_task(task_id)
+
+    if result['success']:
+        console.print(f"\n[bold red]✖ Task killed:[/bold red] {task_id}")
+        console.print(f"[dim]{result['message']}[/dim]")
+        console.print(f"[dim]Task status updated to CANCELLED[/dim]\n")
+    else:
+        console.print(f"\n[bold red]Error:[/bold red] {result['error']}\n")
+        raise click.Abort()
+
+
+@cli.command()
+@click.argument('task_id')
+@click.option('--follow', '-f', is_flag=True, help='Follow output in real-time (not yet implemented)')
+@click.pass_context
+def watch(ctx, task_id, follow):
+    """Watch task execution output"""
+    task_queue = ctx.obj['task_queue']
+    config = ctx.obj['config']
+
+    # Get task
+    task = task_queue.get_task(task_id)
+    if not task:
+        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} not found\n")
+        raise click.Abort()
+
+    # Display task info
+    console.print(f"\n[bold cyan]Task:[/bold cyan] {task_id}")
+    console.print(f"[yellow]Status:[/yellow] {task.status.upper()}")
+
+    if task.process_id:
+        # Check if process is still running
+        try:
+            os.kill(task.process_id, 0)
+            console.print(f"[yellow]Process:[/yellow] {task.process_id} (running)")
+        except ProcessLookupError:
+            console.print(f"[yellow]Process:[/yellow] {task.process_id} (terminated)")
+        except PermissionError:
+            console.print(f"[yellow]Process:[/yellow] {task.process_id} (no permission to check)")
+    else:
+        console.print(f"[yellow]Process:[/yellow] Not yet started")
+
+    console.print(f"[yellow]Description:[/yellow] {task.description[:80]}{'...' if len(task.description) > 80 else ''}")
+
+    if task.started_at:
+        console.print(f"[yellow]Started:[/yellow] {task.started_at}")
+
+    # Show output if available
+    if task.result_path and os.path.exists(task.result_path):
+        console.print(f"\n[bold]Current Output:[/bold]")
+        try:
+            with open(task.result_path) as f:
+                data = json.load(f)
+
+                # Display stdout content
+                if data.get('stdout'):
+                    console.print("\n[dim]--- Output Stream ---[/dim]")
+                    # Parse stream-json and show key events
+                    lines = data['stdout'].strip().split('\n')
+                    for line in lines[:50]:  # Limit to first 50 lines
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                            event_type = event.get('type')
+
+                            # Handle assistant messages with content
+                            if event_type == 'assistant' and 'message' in event:
+                                msg = event['message']
+                                if 'content' in msg:
+                                    for content_block in msg['content']:
+                                        if content_block.get('type') == 'text':
+                                            console.print(f"[white]{content_block.get('text', '')}[/white]")
+                                        elif content_block.get('type') == 'tool_use':
+                                            console.print(f"[cyan]🔧 Tool: {content_block.get('name')}[/cyan]")
+
+                            # Handle direct text blocks
+                            elif event_type == 'text':
+                                console.print(f"[white]{event.get('text', '')}[/white]", end='')
+
+                            # Handle tool use
+                            elif event_type == 'tool_use':
+                                console.print(f"\n[cyan]🔧 Tool: {event.get('name')}[/cyan]")
+
+                            # Handle result messages
+                            elif event_type == 'result':
+                                if event.get('subtype') == 'success':
+                                    console.print(f"\n[green]✓ Success[/green]")
+                                result_text = event.get('result', '')
+                                if result_text and len(result_text) < 200:
+                                    console.print(f"[dim]{result_text}[/dim]")
+
+                            # Show token usage from any message
+                            if 'usage' in event:
+                                usage = event['usage']
+                                console.print(f"[dim]📊 Tokens: {usage.get('input_tokens', 0)} in, {usage.get('output_tokens', 0)} out[/dim]")
+                            elif event_type == 'assistant' and 'message' in event and 'usage' in event['message']:
+                                usage = event['message']['usage']
+                                total_tokens = usage.get('input_tokens', 0) + usage.get('output_tokens', 0)
+                                if total_tokens > 0:  # Only show if there are actual tokens
+                                    console.print(f"[dim]📊 Tokens: {usage.get('input_tokens', 0)} in, {usage.get('output_tokens', 0)} out[/dim]")
+
+                        except json.JSONDecodeError:
+                            # Plain text line - show first 100 chars
+                            if line.strip():
+                                console.print(f"[dim]{line[:100]}[/dim]")
+
+                    if len(lines) > 50:
+                        remaining = len(lines) - 50
+                        console.print(f"\n[dim]... ({remaining} more lines)[/dim]")
+
+        except Exception as e:
+            console.print(f"[red]Failed to read output: {e}[/red]")
+    else:
+        console.print(f"\n[dim]No output available yet[/dim]")
+
+    if follow:
+        console.print(f"\n[yellow]Note:[/yellow] Real-time following is not yet implemented")
+        console.print(f"[dim]For now, run 'nightshift watch {task_id}' again to refresh[/dim]")
+
+    console.print()
 
 
 @cli.command()
