@@ -6,6 +6,7 @@ import subprocess
 import json
 import time
 import os
+import signal
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -59,9 +60,6 @@ class AgentManager:
         """
         start_time = time.time()
 
-        # Update task status to RUNNING
-        self.task_queue.update_status(task.task_id, TaskStatus.RUNNING)
-
         # Start file tracking
         file_tracker = FileTracker()
         file_tracker.start_tracking()
@@ -101,17 +99,43 @@ class AgentManager:
                 except Exception as e:
                     self.logger.warning(f"Could not load GH_TOKEN: {e}")
 
-            # Execute with timeout (no timeout for debugging)
-            result = subprocess.run(
+            # Execute with Popen to get PID immediately
+            process = subprocess.Popen(
                 cmd,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,  # Only use explicit timeout, no default
                 env=env
             )
 
+            # Store PID in task metadata immediately
+            self.task_queue.update_status(
+                task.task_id,
+                TaskStatus.RUNNING,
+                process_id=process.pid
+            )
+            self.logger.info(f"Task {task.task_id} executing with PID: {process.pid}")
+
+            # Wait for completion
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+                returncode = process.returncode
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                raise
+
             execution_time = time.time() - start_time
+
+            # Create a result object similar to subprocess.run
+            class Result:
+                def __init__(self, stdout, stderr, returncode):
+                    self.stdout = stdout
+                    self.stderr = stderr
+                    self.returncode = returncode
+
+            result = Result(stdout, stderr, returncode)
 
             # Parse output
             output_data = self._parse_output(result.stdout, result.stderr)
@@ -383,3 +407,119 @@ class AgentManager:
             "estimated_tokens": estimated_tokens,
             "estimated_time": estimated_time
         }
+
+    def pause_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Pause a running task by sending SIGSTOP to its subprocess
+
+        Returns:
+            Dict with keys: success, message, error
+        """
+        # Get task
+        task = self.task_queue.get_task(task_id)
+        if not task:
+            return {
+                "success": False,
+                "error": f"Task {task_id} not found"
+            }
+
+        # Verify task is running
+        if task.status != TaskStatus.RUNNING.value:
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not running (current status: {task.status})"
+            }
+
+        # Verify we have a PID
+        if not task.process_id:
+            return {
+                "success": False,
+                "error": f"Task {task_id} has no process ID stored"
+            }
+
+        # Verify process is still alive
+        try:
+            os.kill(task.process_id, 0)  # Signal 0 checks if process exists
+        except ProcessLookupError:
+            return {
+                "success": False,
+                "error": f"Process {task.process_id} no longer exists"
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"No permission to signal process {task.process_id}"
+            }
+
+        # Send SIGSTOP to pause the process
+        try:
+            os.kill(task.process_id, signal.SIGSTOP)
+            self.task_queue.update_status(task_id, TaskStatus.PAUSED)
+            self.logger.info(f"Paused task {task_id} (PID: {task.process_id})")
+            return {
+                "success": True,
+                "message": f"Task {task_id} paused successfully"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to pause task: {str(e)}"
+            }
+
+    def resume_task(self, task_id: str) -> Dict[str, Any]:
+        """
+        Resume a paused task by sending SIGCONT to its subprocess
+
+        Returns:
+            Dict with keys: success, message, error
+        """
+        # Get task
+        task = self.task_queue.get_task(task_id)
+        if not task:
+            return {
+                "success": False,
+                "error": f"Task {task_id} not found"
+            }
+
+        # Verify task is paused
+        if task.status != TaskStatus.PAUSED.value:
+            return {
+                "success": False,
+                "error": f"Task {task_id} is not paused (current status: {task.status})"
+            }
+
+        # Verify we have a PID
+        if not task.process_id:
+            return {
+                "success": False,
+                "error": f"Task {task_id} has no process ID stored"
+            }
+
+        # Verify process is still alive
+        try:
+            os.kill(task.process_id, 0)  # Signal 0 checks if process exists
+        except ProcessLookupError:
+            return {
+                "success": False,
+                "error": f"Process {task.process_id} no longer exists"
+            }
+        except PermissionError:
+            return {
+                "success": False,
+                "error": f"No permission to signal process {task.process_id}"
+            }
+
+        # Send SIGCONT to resume the process
+        try:
+            os.kill(task.process_id, signal.SIGCONT)
+            self.task_queue.update_status(task_id, TaskStatus.RUNNING)
+            self.logger.info(f"Resumed task {task_id} (PID: {task.process_id})")
+            return {
+                "success": True,
+                "message": f"Task {task_id} resumed successfully"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to resume task: {str(e)}"
+            }
