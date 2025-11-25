@@ -684,6 +684,151 @@ def watch(ctx, task_id, follow):
 
 
 @cli.command()
+@click.option('--port', default=5000, type=int, help='Port to run server on (default: 5000)')
+@click.option('--host', default='0.0.0.0', help='Host to bind to (default: 0.0.0.0)')
+@click.option('--daemon', is_flag=True, help='Run in background (not yet implemented)')
+@click.pass_context
+def slack_server(ctx, port, host, daemon):
+    """Start Slack webhook server"""
+    config = ctx.obj['config']
+
+    # Check if Slack is configured
+    if not config.slack_enabled:
+        console.print("\n[red]✗ Slack integration not configured[/red]")
+        console.print("\nRun [bold]nightshift slack-setup[/bold] to configure Slack integration\n")
+        raise click.Abort()
+
+    if daemon:
+        console.print("\n[yellow]Note:[/yellow] Daemon mode not yet implemented")
+        console.print("For now, run in foreground mode\n")
+        raise click.Abort()
+
+    # Import Flask app and setup
+    from ..integrations.slack_server import app, setup_server
+    from ..integrations.slack_handler import SlackEventHandler
+    from ..integrations.slack_client import SlackClient
+    from ..integrations.slack_metadata import SlackMetadataStore
+
+    console.print("\n[bold blue]Starting Slack webhook server...[/bold blue]\n")
+
+    # Initialize Slack components
+    slack_client = SlackClient(bot_token=config.slack_bot_token)
+    slack_metadata = SlackMetadataStore(metadata_dir=config.get_slack_metadata_dir())
+
+    # Test connection
+    console.print("[dim]Testing Slack connection...[/dim]")
+    if not slack_client.test_connection():
+        console.print("[red]✗ Failed to connect to Slack API[/red]")
+        console.print("[dim]Check your bot token in the configuration[/dim]\n")
+        raise click.Abort()
+    console.print("[green]✓ Connected to Slack[/green]\n")
+
+    # Initialize event handler
+    event_handler = SlackEventHandler(
+        slack_client=slack_client,
+        task_queue=ctx.obj['task_queue'],
+        task_planner=ctx.obj['task_planner'],
+        agent_manager=ctx.obj['agent_manager'],
+        slack_metadata=slack_metadata,
+        logger=ctx.obj['logger']
+    )
+
+    # Setup Flask app
+    setup_server(event_handler, config.slack_signing_secret)
+
+    # Update agent manager's notifier to include Slack
+    ctx.obj['agent_manager'].notifier.slack_client = slack_client
+    ctx.obj['agent_manager'].notifier.slack_metadata = slack_metadata
+
+    console.print(f"[bold green]✓ Server starting on {host}:{port}[/bold green]")
+    console.print(f"\n[dim]Webhook endpoints:[/dim]")
+    console.print(f"  • POST http://{host}:{port}/slack/commands")
+    console.print(f"  • POST http://{host}:{port}/slack/interactions")
+    console.print(f"  • GET  http://{host}:{port}/health")
+    console.print(f"\n[yellow]Press Ctrl+C to stop the server[/yellow]\n")
+
+    # Run Flask app
+    try:
+        app.run(host=host, port=port, debug=False)
+    except KeyboardInterrupt:
+        console.print("\n\n[dim]Server stopped[/dim]\n")
+
+
+@cli.command()
+@click.pass_context
+def slack_setup(ctx):
+    """Interactive Slack integration setup"""
+    config = ctx.obj['config']
+
+    console.print("\n[bold blue]NightShift Slack Integration Setup[/bold blue]\n")
+
+    # Prompt for credentials
+    console.print("[dim]Get these values from your Slack App settings at https://api.slack.com/apps[/dim]\n")
+
+    bot_token = click.prompt("Slack Bot Token (xoxb-...)", type=str)
+    if not bot_token.startswith('xoxb-'):
+        console.print("\n[red]✗ Invalid bot token format (should start with 'xoxb-')[/red]\n")
+        raise click.Abort()
+
+    signing_secret = click.prompt("Slack Signing Secret", type=str)
+
+    # Optional app token
+    app_token = click.prompt(
+        "Slack App Token (optional, press Enter to skip)",
+        type=str,
+        default='',
+        show_default=False
+    )
+
+    # Save to config
+    config.set_slack_config(
+        bot_token=bot_token,
+        signing_secret=signing_secret,
+        app_token=app_token if app_token else None
+    )
+
+    console.print("\n[bold green]✓ Slack configuration saved![/bold green]\n")
+    console.print("[dim]Next steps:[/dim]")
+    console.print("  1. Run [bold]nightshift slack-server[/bold] to start the webhook server")
+    console.print("  2. Use [bold]ngrok http 5000[/bold] to expose your local server")
+    console.print("  3. Configure Slack App webhook URLs to point to your ngrok URL")
+    console.print("  4. Test with [bold]/nightshift submit[/bold] in Slack\n")
+
+
+@cli.command()
+@click.pass_context
+def slack_config(ctx):
+    """Show current Slack configuration"""
+    config = ctx.obj['config']
+
+    console.print("\n[bold blue]Slack Configuration[/bold blue]\n")
+
+    slack_config = config.get_slack_config()
+
+    if not slack_config['enabled']:
+        console.print("[yellow]Slack integration not configured[/yellow]")
+        console.print("\nRun [bold]nightshift slack-setup[/bold] to configure\n")
+        return
+
+    # Display config
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="white")
+
+    table.add_row("Enabled", "✓ Yes" if slack_config['enabled'] else "✗ No")
+    table.add_row("Bot Token", slack_config['bot_token'] or "Not set")
+    table.add_row("Signing Secret", slack_config['signing_secret'] or "Not set")
+    if slack_config['app_token']:
+        table.add_row("App Token", slack_config['app_token'])
+    table.add_row("Webhook Host", slack_config['webhook_host'])
+    table.add_row("Webhook Port", str(slack_config['webhook_port']))
+    table.add_row("Enable Threads", "✓" if slack_config['enable_threads'] else "✗")
+
+    console.print(table)
+    console.print()
+
+
+@cli.command()
 @click.option('--confirm', is_flag=True, help='Skip confirmation prompt')
 @click.pass_context
 def clear(ctx, confirm):

@@ -13,6 +13,10 @@ setup(
         "rich>=13.0.0",
         "sqlalchemy>=2.0.0",
         "pydantic>=2.0.0",
+        "slack-sdk>=3.23.0",
+        "flask>=3.0.0",
+        "flask-limiter>=3.5.0",
+        "python-dotenv>=1.0.0",
     ],
     entry_points={
         "console_scripts": [

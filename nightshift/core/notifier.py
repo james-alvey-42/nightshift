@@ -16,10 +16,17 @@ from .file_tracker import FileChange
 class Notifier:
     """Handles notifications for task completion"""
 
-    def __init__(self, notification_dir: str = "notifications"):
+    def __init__(
+        self,
+        notification_dir: str = "notifications",
+        slack_client: Optional[Any] = None,
+        slack_metadata_store: Optional[Any] = None
+    ):
         self.notification_dir = Path(notification_dir)
         self.notification_dir.mkdir(parents=True, exist_ok=True)
         self.console = Console()
+        self.slack_client = slack_client
+        self.slack_metadata = slack_metadata_store
 
     def generate_summary(
         self,
@@ -79,12 +86,15 @@ class Notifier:
         # Save to file
         self._save_notification(summary)
 
-        # Display in terminal (for now)
+        # Display in terminal
         self._display_terminal(summary)
 
-        # Future: Send to Slack, email, etc.
-        # self._send_slack(summary)
-        # self._send_email(summary)
+        # Send to Slack if configured
+        if self.slack_client and self.slack_metadata:
+            try:
+                self._send_slack(summary)
+            except Exception as e:
+                self.console.print(f"[yellow]Warning: Slack notification failed: {e}[/yellow]")
 
     def _save_notification(self, summary: Dict[str, Any]):
         """Save notification to file"""
@@ -151,9 +161,33 @@ class Notifier:
         self.console.print("\n")
 
     def _send_slack(self, summary: Dict[str, Any]):
-        """Send notification to Slack (to be implemented)"""
-        # TODO: Implement Slack notification
-        pass
+        """Send notification to Slack"""
+        # Get Slack metadata for this task
+        metadata = self.slack_metadata.get(summary['task_id'])
+        if not metadata:
+            # Task wasn't submitted via Slack, skip notification
+            return
+
+        # Import formatter (lazy import to avoid circular dependency)
+        from ..integrations.slack_formatter import SlackFormatter
+
+        # Format as Block Kit
+        blocks = SlackFormatter.format_completion_notification(summary)
+
+        # For DMs, use user_id as channel; for channels, use channel_id
+        channel_id = metadata['channel_id']
+        target_channel = metadata['user_id'] if channel_id.startswith('D') else channel_id
+
+        # Send to original channel/thread
+        self.slack_client.post_message(
+            channel=target_channel,
+            text=f"Task {summary['task_id']} completed",
+            blocks=blocks,
+            thread_ts=metadata.get('thread_ts')
+        )
+
+        # Clean up metadata after notification sent
+        self.slack_metadata.delete(summary['task_id'])
 
     def _send_email(self, summary: Dict[str, Any]):
         """Send notification via email (to be implemented)"""

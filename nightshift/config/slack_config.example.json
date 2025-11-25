@@ -1,0 +1,9 @@
+{
+  "bot_token": "xoxb-your-bot-token-here",
+  "signing_secret": "your-signing-secret-here",
+  "app_token": null,
+  "webhook_port": 5000,
+  "webhook_host": "0.0.0.0",
+  "enable_threads": true,
+  "default_channel": null
+}
