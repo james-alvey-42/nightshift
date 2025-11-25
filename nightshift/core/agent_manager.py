@@ -7,6 +7,7 @@ import json
 import time
 import os
 import signal
+import fcntl
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -99,6 +100,9 @@ class AgentManager:
                 except Exception as e:
                     self.logger.warning(f"Could not load GH_TOKEN: {e}")
 
+            # Create output file path immediately
+            output_file = self.output_dir / f"{task.task_id}_output.json"
+
             # Execute with Popen to get PID immediately
             process = subprocess.Popen(
                 cmd,
@@ -109,24 +113,107 @@ class AgentManager:
                 env=env
             )
 
-            # Store PID in task metadata immediately
+            # Store PID and result path in task metadata immediately
             self.task_queue.update_status(
                 task.task_id,
                 TaskStatus.RUNNING,
-                process_id=process.pid
+                process_id=process.pid,
+                result_path=str(output_file)
             )
             self.logger.info(f"Task {task.task_id} executing with PID: {process.pid}")
 
-            # Wait for completion
+            # Initialize output file with metadata
+            with open(output_file, "w") as f:
+                json.dump({
+                    "task_id": task.task_id,
+                    "command": cmd,
+                    "stdout": "",
+                    "stderr": "",
+                    "returncode": None,
+                    "execution_time": None,
+                    "status": "running"
+                }, f, indent=2)
+
+            # Stream output to file in real-time
+            stdout_lines = []
+            stderr_lines = []
+
+            # Set non-blocking mode on stdout and stderr
+            if process.stdout:
+                flags = fcntl.fcntl(process.stdout.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(process.stdout.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            if process.stderr:
+                flags = fcntl.fcntl(process.stderr.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(process.stderr.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+            # Wait for completion while streaming output
             try:
-                stdout, stderr = process.communicate(timeout=timeout)
-                returncode = process.returncode
+                while True:
+                    # Check if process is still running
+                    returncode = process.poll()
+
+                    # Read available stdout
+                    if process.stdout:
+                        try:
+                            line = process.stdout.readline()
+                            if line:
+                                stdout_lines.append(line)
+                                # Update file with partial output
+                                with open(output_file, "w") as f:
+                                    json.dump({
+                                        "task_id": task.task_id,
+                                        "command": cmd,
+                                        "stdout": "".join(stdout_lines),
+                                        "stderr": "".join(stderr_lines),
+                                        "returncode": returncode,
+                                        "execution_time": time.time() - start_time,
+                                        "status": "running" if returncode is None else "completed"
+                                    }, f, indent=2)
+                        except:
+                            pass
+
+                    # Read available stderr
+                    if process.stderr:
+                        try:
+                            line = process.stderr.readline()
+                            if line:
+                                stderr_lines.append(line)
+                        except:
+                            pass
+
+                    # Exit if process completed
+                    if returncode is not None:
+                        # Read any remaining output
+                        if process.stdout:
+                            remaining = process.stdout.read()
+                            if remaining:
+                                stdout_lines.append(remaining)
+                        if process.stderr:
+                            remaining = process.stderr.read()
+                            if remaining:
+                                stderr_lines.append(remaining)
+                        break
+
+                    # Small sleep to avoid busy waiting
+                    time.sleep(0.1)
+
+                    # Check timeout
+                    if timeout and (time.time() - start_time) > timeout:
+                        process.kill()
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+
             except subprocess.TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
+                stdout_lines.append(stdout)
+                stderr_lines.append(stderr)
                 raise
 
             execution_time = time.time() - start_time
+
+            # Combine output
+            stdout = "".join(stdout_lines)
+            stderr = "".join(stderr_lines)
 
             # Create a result object similar to subprocess.run
             class Result:
@@ -140,8 +227,7 @@ class AgentManager:
             # Parse output
             output_data = self._parse_output(result.stdout, result.stderr)
 
-            # Save full output to file
-            output_file = self.output_dir / f"{task.task_id}_output.json"
+            # Save final output to file
             with open(output_file, "w") as f:
                 json.dump({
                     "task_id": task.task_id,
@@ -149,7 +235,8 @@ class AgentManager:
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "returncode": result.returncode,
-                    "execution_time": execution_time
+                    "execution_time": execution_time,
+                    "status": "completed"
                 }, f, indent=2)
 
             # Log agent output
