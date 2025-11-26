@@ -96,8 +96,11 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
     @kb.add('c-l', filter=is_normal_mode)
     def _(event):
         """Hard refresh from backend"""
-        controller.refresh_tasks()
-        state.message = "Refreshed"
+        try:
+            controller.refresh_tasks()
+            state.message = "Refreshed"
+        except Exception as e:
+            state.message = f"Refresh failed: {e}"
         get_app().invalidate()
 
     # Phase 3: Task actions
