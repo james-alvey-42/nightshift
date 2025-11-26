@@ -47,32 +47,49 @@ class TUIController:
         except Exception:
             pass
 
-    def _run_in_thread(self, label: str, target, *args, **kwargs):
-        """Run blocking work in a background thread with busy state."""
-        self.state.busy = True
-        self.state.busy_label = label
-        self._invalidate()
+    def _run_in_thread_with_callback(self, label: str, target, callback):
+        """
+        Run blocking work in background thread with result callback.
+
+        The target function should NOT mutate self.state - it should return
+        a result value. The callback receives that result and runs on the
+        event loop thread where it CAN safely mutate self.state.
+        """
+        app = get_app()
+        loop = app.loop
+
+        def set_busy():
+            self.state.busy = True
+            self.state.busy_label = label
+            app.invalidate()
+
+        loop.call_soon_threadsafe(set_busy)
 
         def worker():
+            result = None
             try:
-                target(*args, **kwargs)
+                result = target()
+            except Exception as e:
+                self.logger.error(f"Worker thread error: {e}")
             finally:
-                # Use call_from_executor to modify state from main thread
-                # This prevents UI corruption from concurrent state modification
-                def clear_busy():
+                def on_done():
                     self.state.busy = False
                     self.state.busy_label = ""
-                    # Don't call refresh_tasks() from worker thread - causes race conditions
-                    # The auto-refresh loop will pick up changes within 2 seconds
-                    self._invalidate()
+                    if callback:
+                        callback(result)
+                    app.invalidate()
 
                 try:
-                    get_app().loop.call_soon_threadsafe(clear_busy)
+                    loop.call_soon_threadsafe(on_done)
                 except Exception:
-                    # Fallback if app is shutting down
+                    # App is shutting down
                     pass
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _run_in_thread(self, label: str, target, *args, **kwargs):
+        """Legacy wrapper - prefer _run_in_thread_with_callback for new code"""
+        self._run_in_thread_with_callback(label, lambda: target(*args, **kwargs), None)
 
     def load_selected_task_details(self):
         """Load details for the currently selected task"""
@@ -350,6 +367,7 @@ class TUIController:
             return
 
         def work():
+            """Worker function - NO state mutations here"""
             try:
                 # Plan task
                 plan = self.planner.plan_task(description)
@@ -370,22 +388,38 @@ class TUIController:
                 )
 
                 self.logger.info(f"TUI: created task {task_id}")
-                self.state.message = f"Created task {task_id}"
 
                 if auto_approve:
                     # Approve & execute
                     self.queue.update_status(task_id, TaskStatus.COMMITTED)
                     self.logger.info(f"TUI: auto-approved {task_id}")
-                    self.state.message = f"Executing {task_id}..."
                     # Execute in this same worker thread (already background)
                     self.agent.execute_task(task)
 
+                return ("success", task_id, auto_approve)
+
             except Exception as e:
                 self.logger.error(f"TUI: submit task failed: {e}")
-                self.state.message = f"Submit failed: {e}"
+                return ("error", str(e), None)
+
+        def on_complete(result):
+            """Callback to update state - runs on event loop thread"""
+            if result is None:
+                self.state.message = "Submit failed"
+                return
+
+            status, value, was_auto = result
+            if status == "error":
+                self.state.message = f"Submit failed: {value}"
+            elif status == "success":
+                task_id = value
+                if was_auto:
+                    self.state.message = f"Executed {task_id}"
+                else:
+                    self.state.message = f"Created task {task_id}"
 
         label = "Planning task..." if not auto_approve else "Planning & executing..."
-        self._run_in_thread(label, work)
+        self._run_in_thread_with_callback(label, work, on_complete)
 
     def approve_selected_task(self):
         """Approve currently selected STAGED task and start execution."""
@@ -404,19 +438,27 @@ class TUIController:
             return
 
         def work():
+            """Worker - no state mutations"""
             try:
                 # Mark committed and execute
                 self.queue.update_status(task.task_id, TaskStatus.COMMITTED)
                 self.logger.info(f"TUI: approved {task.task_id}")
-                self.state.message = f"Executing {task.task_id}..."
                 # Re-fetch to ensure latest state, if needed
                 t = self.queue.get_task(task.task_id) or task
                 self.agent.execute_task(t)
-                self.state.message = f"Task {task.task_id} completed (or running)"
+                return ("success", task.task_id)
             except Exception as e:
-                self.state.message = f"Approve failed: {e}"
+                return ("error", str(e))
 
-        self._run_in_thread(f"Executing {task.task_id}...", work)
+        def on_complete(result):
+            """Update state on event loop thread"""
+            if result is None or result[0] == "error":
+                error_msg = result[1] if result else "unknown error"
+                self.state.message = f"Approve failed: {error_msg}"
+            else:
+                self.state.message = f"Task {result[1]} executed"
+
+        self._run_in_thread_with_callback(f"Executing {task.task_id}...", work, on_complete)
 
     def reject_selected_task(self):
         """Reject/cancel the selected task (STAGED or COMMITTED)."""
