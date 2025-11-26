@@ -300,6 +300,39 @@ nightshift clear --confirm
 </details>
 
 <details>
+<summary><b>⌨️ Shell Autocomplete (NEW!)</b></summary>
+
+```bash
+# Auto-detect shell and install completion
+nightshift completion --install
+
+# Show instructions for specific shell
+nightshift completion --shell zsh
+nightshift completion --shell bash
+nightshift completion --shell fish
+
+# Reload your shell
+source ~/.zshrc  # or ~/.bashrc for bash
+```
+
+**What gets autocompleted:**
+- ✅ Commands: `nightshift sub<TAB>` → `nightshift submit`
+- ✅ Subcommands: `nightshift executor st<TAB>` → `nightshift executor start`
+- ✅ Options: `nightshift queue --st<TAB>` → `nightshift queue --status`
+- ✅ Status values: `nightshift queue --status <TAB>` → shows all status options
+- ✅ **Task IDs (dynamic)**: `nightshift approve task_<TAB>` → shows all staged tasks
+- ✅ Context-aware task filtering:
+  - `approve` and `revise` → only STAGED tasks
+  - `cancel` → only STAGED or COMMITTED tasks
+  - `pause`, `resume`, `kill` → only RUNNING or PAUSED tasks
+  - `results`, `display`, `watch` → all tasks
+
+**Supported shells:** Bash (4.4+), Zsh, Fish, PowerShell
+
+This significantly improves CLI usability by reducing typos and helping discover available commands!
+</details>
+
+<details>
 <summary><b>🔀 Concurrent Execution (NEW!)</b></summary>
 
 ```bash
