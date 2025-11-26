@@ -59,11 +59,8 @@ class TUIController:
                 # Clear busy state, but keep any message set by worker
                 self.state.busy = False
                 self.state.busy_label = ""
-                # Refresh tasks so list reflects latest status
-                try:
-                    self.refresh_tasks()
-                except Exception:
-                    pass
+                # Don't call refresh_tasks() from worker thread - causes race conditions
+                # The auto-refresh loop will pick up changes within 2 seconds
                 self._invalidate()
 
         threading.Thread(target=worker, daemon=True).start()
