@@ -194,7 +194,7 @@ Guidelines:
 
             # Validate required fields
             required_fields = ["enhanced_prompt", "allowed_tools", "allowed_directories",
-                             "needs_git", "system_prompt", "estimated_tokens", "estimated_time"]
+                             "needs_git", "system_prompt", "estimated_tokens"]
             for field in required_fields:
                 if field not in plan:
                     raise Exception(f"Planning response missing field: {field}")
@@ -336,7 +336,7 @@ Guidelines:
 
             # Validate required fields
             required_fields = ["enhanced_prompt", "allowed_tools", "allowed_directories",
-                             "needs_git", "system_prompt", "estimated_tokens", "estimated_time"]
+                             "needs_git", "system_prompt", "estimated_tokens"]
             for field in required_fields:
                 if field not in refined_plan:
                     raise Exception(f"Refined plan missing field: {field}")
