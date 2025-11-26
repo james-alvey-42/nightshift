@@ -52,7 +52,6 @@ class TaskPlanner:
                 - allowed_tools: List of tool names needed
                 - system_prompt: System prompt for the executor
                 - estimated_tokens: Rough token estimate
-                - estimated_time: Rough time estimate in seconds
                 - reasoning: Why these tools were chosen
         """
 
@@ -82,7 +81,6 @@ Respond with ONLY a JSON object (no other text) with this structure:
     "needs_git": false,
     "system_prompt": "System prompt for the executor",
     "estimated_tokens": 1000,
-    "estimated_time": 60,
     "reasoning": "Brief explanation of tool choices and directory permissions"
 }}
 
@@ -90,7 +88,6 @@ Guidelines:
 - Be specific about which tools are needed
 - Include file operations tools (Write, Read) if outputs need to be saved
 - For arxiv tasks, include mcp__arxiv__download and either mcp__gemini__ask or mcp__claude__ask for summarization
-- Estimated time: simple tasks 30s, paper analysis 60s, data analysis 120s
 - Estimated tokens: add ~2000 for paper tasks, ~1000 for data tasks, ~500 base
 
 **NEEDS_GIT FLAG (CRITICAL):**
@@ -138,10 +135,9 @@ Guidelines:
                     "needs_git": {"type": "boolean"},
                     "system_prompt": {"type": "string"},
                     "estimated_tokens": {"type": "integer"},
-                    "estimated_time": {"type": "integer"},
                     "reasoning": {"type": "string"}
                 },
-                "required": ["enhanced_prompt", "allowed_tools", "allowed_directories", "needs_git", "system_prompt", "estimated_tokens", "estimated_time"]
+                "required": ["enhanced_prompt", "allowed_tools", "allowed_directories", "needs_git", "system_prompt", "estimated_tokens"]
             })
 
             cmd = [
@@ -244,7 +240,6 @@ Allowed Tools: {', '.join(current_plan.get('allowed_tools', []))}
 Allowed Directories: {', '.join(current_plan.get('allowed_directories', []))}
 System Prompt: {current_plan.get('system_prompt', 'N/A')}
 Estimated Tokens: {current_plan.get('estimated_tokens', 0)}
-Estimated Time: {current_plan.get('estimated_time', 0)}s
 
 USER FEEDBACK:
 {feedback}
@@ -263,7 +258,6 @@ Based on the user's feedback, create a REVISED plan. Respond with ONLY a JSON ob
     "needs_git": false,
     "system_prompt": "Revised system prompt for the executor",
     "estimated_tokens": 1000,
-    "estimated_time": 60,
     "reasoning": "Brief explanation of how the feedback was incorporated"
 }}
 
@@ -271,7 +265,7 @@ Guidelines:
 - Address the specific concerns raised in the user feedback
 - Maintain the overall task objectives unless feedback suggests otherwise
 - Adjust tool selection if the user requests different capabilities
-- Update estimates based on scope changes
+- Update token estimates based on scope changes
 - Explain what changed in the reasoning field
 - **NEEDS_GIT**: Set needs_git=true for git operations OR 'gh' CLI usage (GitHub issues, PRs, etc.)
 - **SECURITY**: Only allow write access to minimum required directories (use absolute paths)
@@ -290,11 +284,10 @@ Guidelines:
                     "needs_git": {"type": "boolean"},
                     "system_prompt": {"type": "string"},
                     "estimated_tokens": {"type": "integer"},
-                    "estimated_time": {"type": "integer"},
                     "reasoning": {"type": "string"}
                 },
                 "required": ["enhanced_prompt", "allowed_tools", "allowed_directories", "needs_git", "system_prompt",
-                             "estimated_tokens", "estimated_time"]
+                             "estimated_tokens"]
             })
 
             cmd = [

@@ -56,9 +56,17 @@ class AgentManager:
         """
         Execute a task using Claude headless mode
 
+        Args:
+            task: Task object to execute
+            timeout: Optional timeout override (seconds). If not provided, uses task.timeout_seconds (default: 900)
+
         Returns:
             Dict with keys: success, output, token_usage, execution_time, error
         """
+        # Use timeout from task if not explicitly provided
+        if timeout is None:
+            timeout = task.timeout_seconds or 900
+
         start_time = time.time()
 
         # Start file tracking

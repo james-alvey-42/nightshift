@@ -54,11 +54,12 @@ def cli(ctx):
 @click.argument('description')
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
 @click.option('--sync', is_flag=True, help='Execute synchronously (wait for completion), only with --auto-approve')
+@click.option('--timeout', default=900, type=int, help='Task execution timeout in seconds (default: 900 = 15 mins)')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
 @click.option('--allow-dir', multiple=True, help='Additional directories to allow writes (can be specified multiple times)')
 @click.option('--debug', is_flag=True, help='Show full command and sandbox profile')
 @click.pass_context
-def submit(ctx, description, auto_approve, sync, planning_timeout, allow_dir, debug):
+def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allow_dir, debug):
     """Submit a new task (with sandbox isolation on macOS)"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -92,7 +93,7 @@ def submit(ctx, description, auto_approve, sync, planning_timeout, allow_dir, de
             needs_git=plan.get('needs_git', False),
             system_prompt=plan['system_prompt'],
             estimated_tokens=plan['estimated_tokens'],
-            estimated_time=plan['estimated_time']
+            timeout_seconds=timeout
         )
 
         logger.log_task_created(task_id, description)
@@ -111,7 +112,8 @@ def submit(ctx, description, auto_approve, sync, planning_timeout, allow_dir, de
             f"[yellow]Enhanced prompt:[/yellow] {plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(plan['allowed_tools'])}\n\n"
             f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}{git_status}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{plan['estimated_tokens']} tokens, ~{plan['estimated_time']}s\n\n"
+            f"[yellow]Estimated:[/yellow] ~{plan['estimated_tokens']} tokens\n\n"
+            f"[yellow]Timeout:[/yellow] {timeout}s ({timeout // 60}m {timeout % 60}s)\n\n"
             f"[yellow]Reasoning:[/yellow] {plan.get('reasoning', 'N/A')}",
             title=f"Task Plan: {task_id}",
             border_style="blue"
@@ -349,8 +351,9 @@ def results(ctx, task_id, show_output):
 @cli.command()
 @click.argument('task_id')
 @click.argument('feedback')
+@click.option('--timeout', type=int, help='Override task execution timeout in seconds')
 @click.pass_context
-def revise(ctx, task_id, feedback):
+def revise(ctx, task_id, feedback, timeout):
     """Request plan revision with feedback for a staged task"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -376,11 +379,14 @@ def revise(ctx, task_id, feedback):
             'allowed_tools': task.allowed_tools or [],
             'system_prompt': task.system_prompt or '',
             'estimated_tokens': task.estimated_tokens or 0,
-            'estimated_time': task.estimated_time or 0
+            'timeout_seconds': task.timeout_seconds or 900
         }
 
         # Use Claude to refine the plan
         revised_plan = task_planner.refine_plan(current_plan, feedback)
+
+        # Use timeout override if provided, otherwise use value from revised plan or current task
+        final_timeout = timeout if timeout is not None else (revised_plan.get('timeout_seconds') or task.timeout_seconds or 900)
 
         # Update task with revised plan
         success = task_queue.update_plan(
@@ -389,7 +395,7 @@ def revise(ctx, task_id, feedback):
             allowed_tools=revised_plan['allowed_tools'],
             system_prompt=revised_plan['system_prompt'],
             estimated_tokens=revised_plan['estimated_tokens'],
-            estimated_time=revised_plan['estimated_time']
+            timeout_seconds=final_timeout
         )
 
         if not success:
@@ -404,7 +410,8 @@ def revise(ctx, task_id, feedback):
         panel = Panel.fit(
             f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
+            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens\n\n"
+            f"[yellow]Timeout:[/yellow] {final_timeout}s ({final_timeout // 60}m {final_timeout % 60}s)\n\n"
             f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
             title=f"Revised Plan: {task_id}",
             border_style="green"
@@ -445,87 +452,6 @@ def display(ctx, task_id):
     viewer = OutputViewer()
     console.print()  # Add spacing
     viewer.display_task_output(task.result_path)
-
-
-@cli.command()
-@click.argument('task_id')
-@click.argument('feedback')
-@click.pass_context
-def revise(ctx, task_id, feedback):
-    """Request plan revision with feedback for a staged task"""
-    logger = ctx.obj['logger']
-    task_queue = ctx.obj['task_queue']
-    task_planner = ctx.obj['task_planner']
-
-    # Get task
-    task = task_queue.get_task(task_id)
-    if not task:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} not found\n")
-        raise click.Abort()
-
-    if task.status != TaskStatus.STAGED.value:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} is not in STAGED state (current: {task.status})\n")
-        console.print(f"[dim]Only staged tasks can be revised[/dim]\n")
-        raise click.Abort()
-
-    console.print(f"\n[bold blue]Revising plan based on feedback...[/bold blue]")
-
-    try:
-        # Build current plan from task
-        current_plan = {
-            'enhanced_prompt': task.description,
-            'allowed_tools': task.allowed_tools or [],
-            'allowed_directories': task.allowed_directories or [],
-            'system_prompt': task.system_prompt or '',
-            'estimated_tokens': task.estimated_tokens or 0,
-            'estimated_time': task.estimated_time or 0
-        }
-
-        # Use Claude to refine the plan
-        revised_plan = task_planner.refine_plan(current_plan, feedback)
-
-        # Update task with revised plan
-        success = task_queue.update_plan(
-            task_id=task_id,
-            description=revised_plan['enhanced_prompt'],
-            allowed_tools=revised_plan['allowed_tools'],
-            allowed_directories=revised_plan['allowed_directories'],
-            system_prompt=revised_plan['system_prompt'],
-            estimated_tokens=revised_plan['estimated_tokens'],
-            estimated_time=revised_plan['estimated_time']
-        )
-
-        if not success:
-            console.print(f"\n[bold red]Error:[/bold red] Failed to update task plan\n")
-            raise click.Abort()
-
-        task_queue.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
-
-        # Display revised plan
-        console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
-
-        # Format directories display
-        dirs_display = "\n".join(f"  • {d}" for d in revised_plan.get('allowed_directories', [])) if revised_plan.get('allowed_directories') else "  (none)"
-
-        panel = Panel.fit(
-            f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
-            f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
-            f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
-            f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
-            title=f"Revised Plan: {task_id}",
-            border_style="green"
-        )
-        console.print(panel)
-
-        console.print(f"\n[dim]Status:[/dim] STAGED (waiting for approval)")
-        console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
-        console.print(f"[dim]Or 'nightshift revise {task_id} \"more feedback\"' to revise again[/dim]\n")
-
-    except Exception as e:
-        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
-        logger.error(f"Plan revision failed for {task_id}: {str(e)}")
-        raise click.Abort()
 
 
 @cli.command()

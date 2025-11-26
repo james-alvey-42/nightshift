@@ -113,7 +113,7 @@ class SlackEventHandler:
             # Generate task ID
             task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-            # Create task in STAGED state
+            # Create task in STAGED state (default timeout: 15 minutes)
             task = self.task_queue.create_task(
                 task_id=task_id,
                 description=plan['enhanced_prompt'],
@@ -122,7 +122,7 @@ class SlackEventHandler:
                 needs_git=plan.get('needs_git', False),
                 system_prompt=plan['system_prompt'],
                 estimated_tokens=plan['estimated_tokens'],
-                estimated_time=plan['estimated_time']
+                timeout_seconds=900  # 15 minutes default for Slack tasks
             )
 
             # Store Slack metadata
