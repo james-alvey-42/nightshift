@@ -2,10 +2,13 @@
 TUI Keybindings
 Vi-style keymaps for NightShift
 """
+import tempfile
+import subprocess
+from pathlib import Path
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.application.current import get_app
-from prompt_toolkit.shortcuts import input_dialog
+from prompt_toolkit.application import run_in_terminal
 from .models import UIState
 
 
@@ -119,27 +122,45 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
         controller.reject_selected_task()
         get_app().invalidate()
 
-    # Submit new task (simple prompt)
+    # Submit new task (vim editor)
     @kb.add('s', filter=is_normal_mode)
     def _(event):
         """
         Submit new task.
-        Opens a simple blocking input dialog for description,
+        Opens vim to edit task description,
         then calls controller.submit_task().
         """
-        app = get_app()
+        def open_vim_and_submit():
+            # Create temporary file with helpful template
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                f.write("# Describe your task below (lines starting with # are ignored)\n")
+                f.write("# Save and quit (:wq) to submit, or quit without saving (:q!) to cancel\n\n")
+                temp_path = f.name
 
-        async def _prompt_and_submit():
-            # input_dialog is async-friendly helper
-            desc = await input_dialog(
-                title="Submit Task",
-                text="Describe the task:"
-            ).run_async()
-            if desc:
-                controller.submit_task(desc, auto_approve=False)
-                app.invalidate()
+            try:
+                # Open vim
+                result = subprocess.run(['vim', temp_path], check=False)
 
-        app.create_background_task(_prompt_and_submit())
+                # Read the content
+                with open(temp_path, 'r') as f:
+                    lines = f.readlines()
+
+                # Filter out comments and empty lines
+                desc_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
+                desc = ''.join(desc_lines).strip()
+
+                if desc:
+                    controller.submit_task(desc, auto_approve=False)
+                else:
+                    state.message = "Submit cancelled: empty description"
+
+            finally:
+                # Clean up temp file
+                Path(temp_path).unlink(missing_ok=True)
+
+            get_app().invalidate()
+
+        run_in_terminal(open_vim_and_submit)
 
     # Command mode: enter with :
     @kb.add(':', filter=is_normal_mode)
