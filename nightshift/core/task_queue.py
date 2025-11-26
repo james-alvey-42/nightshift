@@ -33,8 +33,7 @@ class Task:
     allowed_directories: Optional[List[str]] = None  # Sandbox-allowed write directories
     needs_git: Optional[bool] = None  # Enable device file access for git operations
     system_prompt: Optional[str] = None
-    estimated_tokens: Optional[int] = None
-    estimated_time: Optional[int] = None  # seconds
+    timeout_seconds: Optional[int] = None  # Execution timeout (default: 900 = 15 mins)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -51,16 +50,43 @@ class Task:
 
 
 class TaskQueue:
-    """SQLite-backed task queue with state management"""
+    """SQLite-backed task queue with state management (thread-safe)"""
 
     def __init__(self, db_path: str = "database/nightshift.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._enable_wal_mode()
+
+    def _get_connection(self):
+        """
+        Get a database connection with settings optimized for concurrent access
+
+        Returns:
+            sqlite3.Connection with thread-safe settings
+        """
+        conn = sqlite3.connect(
+            str(self.db_path),
+            check_same_thread=False,  # Allow multi-thread access
+            timeout=30.0,  # Wait up to 30s for database locks
+            isolation_level='DEFERRED'  # Reduce lock contention
+        )
+        return conn
+
+    def _enable_wal_mode(self):
+        """
+        Enable Write-Ahead Logging (WAL) mode for better concurrent access
+
+        WAL mode allows multiple readers and one writer to access the database
+        concurrently without blocking each other.
+        """
+        with self._get_connection() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
 
     def _init_db(self):
         """Initialize database schema"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     task_id TEXT PRIMARY KEY,
@@ -71,8 +97,7 @@ class TaskQueue:
                     allowed_directories TEXT,  -- JSON array for sandbox
                     needs_git INTEGER,  -- Boolean: enable device files for git
                     system_prompt TEXT,
-                    estimated_tokens INTEGER,
-                    estimated_time INTEGER,
+                    timeout_seconds INTEGER DEFAULT 900,  -- Execution timeout (default: 15 mins)
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     started_at TEXT,
@@ -98,6 +123,14 @@ class TaskQueue:
                 conn.execute("ALTER TABLE tasks ADD COLUMN process_id INTEGER")
                 conn.commit()
 
+            # Migration: Add timeout_seconds column and remove estimated_time
+            if 'timeout_seconds' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN timeout_seconds INTEGER DEFAULT 900")
+                conn.commit()
+
+            # Note: SQLite doesn't support DROP COLUMN easily, so we leave estimated_time if it exists
+            # New code will use timeout_seconds instead
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS task_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,8 +153,7 @@ class TaskQueue:
         allowed_directories: Optional[List[str]] = None,
         needs_git: Optional[bool] = None,
         system_prompt: Optional[str] = None,
-        estimated_tokens: Optional[int] = None,
-        estimated_time: Optional[int] = None
+        timeout_seconds: Optional[int] = 900  # Default 15 minutes
     ) -> Task:
         """Create a new task in STAGED state"""
         now = datetime.now().isoformat()
@@ -135,19 +167,18 @@ class TaskQueue:
             allowed_directories=allowed_directories,
             needs_git=needs_git,
             system_prompt=system_prompt,
-            estimated_tokens=estimated_tokens,
-            estimated_time=estimated_time,
+            timeout_seconds=timeout_seconds,
             created_at=now,
             updated_at=now
         )
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO tasks (
                     task_id, description, status, skill_name, allowed_tools,
-                    allowed_directories, needs_git, system_prompt, estimated_tokens, estimated_time,
+                    allowed_directories, needs_git, system_prompt, timeout_seconds,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
                 task.description,
@@ -157,8 +188,7 @@ class TaskQueue:
                 json.dumps(task.allowed_directories) if task.allowed_directories else None,
                 1 if task.needs_git else 0,
                 task.system_prompt,
-                task.estimated_tokens,
-                task.estimated_time,
+                task.timeout_seconds,
                 task.created_at,
                 task.updated_at
             ))
@@ -168,7 +198,7 @@ class TaskQueue:
 
     def get_task(self, task_id: str) -> Optional[Task]:
         """Retrieve a task by ID"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM tasks WHERE task_id = ?",
@@ -179,6 +209,13 @@ class TaskQueue:
             if not row:
                 return None
 
+            # Handle timeout_seconds with fallback to estimated_time for backwards compat
+            timeout_val = row["timeout_seconds"] if "timeout_seconds" in row.keys() else None
+            if timeout_val is None and "estimated_time" in row.keys():
+                timeout_val = row["estimated_time"]  # Fallback for old tasks
+            if timeout_val is None:
+                timeout_val = 900  # Default 15 minutes
+
             return Task(
                 task_id=row["task_id"],
                 description=row["description"],
@@ -188,8 +225,7 @@ class TaskQueue:
                 allowed_directories=json.loads(row["allowed_directories"]) if row["allowed_directories"] else None,
                 needs_git=bool(row["needs_git"]) if row["needs_git"] is not None else None,
                 system_prompt=row["system_prompt"],
-                estimated_tokens=row["estimated_tokens"],
-                estimated_time=row["estimated_time"],
+                timeout_seconds=timeout_val,
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 started_at=row["started_at"],
@@ -203,7 +239,7 @@ class TaskQueue:
 
     def list_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
         """List all tasks, optionally filtered by status"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
 
             if status:
@@ -218,6 +254,13 @@ class TaskQueue:
 
             tasks = []
             for row in cursor.fetchall():
+                # Handle timeout_seconds with fallback to estimated_time for backwards compat
+                timeout_val = row["timeout_seconds"] if "timeout_seconds" in row.keys() else None
+                if timeout_val is None and "estimated_time" in row.keys():
+                    timeout_val = row["estimated_time"]  # Fallback for old tasks
+                if timeout_val is None:
+                    timeout_val = 900  # Default 15 minutes
+
                 tasks.append(Task(
                     task_id=row["task_id"],
                     description=row["description"],
@@ -227,8 +270,7 @@ class TaskQueue:
                     allowed_directories=json.loads(row["allowed_directories"]) if row["allowed_directories"] else None,
                     needs_git=bool(row["needs_git"]) if row["needs_git"] is not None else None,
                     system_prompt=row["system_prompt"],
-                    estimated_tokens=row["estimated_tokens"],
-                    estimated_time=row["estimated_time"],
+                    timeout_seconds=timeout_val,
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     started_at=row["started_at"],
@@ -271,7 +313,7 @@ class TaskQueue:
 
         values.append(task_id)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.execute(
                 f"UPDATE tasks SET {', '.join(update_fields)} WHERE task_id = ?",
                 values
@@ -286,8 +328,7 @@ class TaskQueue:
         allowed_tools: Optional[List[str]] = None,
         allowed_directories: Optional[List[str]] = None,
         system_prompt: Optional[str] = None,
-        estimated_tokens: Optional[int] = None,
-        estimated_time: Optional[int] = None
+        timeout_seconds: Optional[int] = None
     ) -> bool:
         """
         Update task plan details (for plan revision)
@@ -295,15 +336,14 @@ class TaskQueue:
         """
         now = datetime.now().isoformat()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.execute(
                 """UPDATE tasks SET
                     description = ?,
                     allowed_tools = ?,
                     allowed_directories = ?,
                     system_prompt = ?,
-                    estimated_tokens = ?,
-                    estimated_time = ?,
+                    timeout_seconds = ?,
                     updated_at = ?
                 WHERE task_id = ? AND status = ?""",
                 (
@@ -311,8 +351,7 @@ class TaskQueue:
                     json.dumps(allowed_tools) if allowed_tools else None,
                     json.dumps(allowed_directories) if allowed_directories else None,
                     system_prompt,
-                    estimated_tokens,
-                    estimated_time,
+                    timeout_seconds,
                     now,
                     task_id,
                     TaskStatus.STAGED.value
@@ -323,7 +362,7 @@ class TaskQueue:
 
     def add_log(self, task_id: str, log_level: str, message: str):
         """Add a log entry for a task"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO task_logs (task_id, timestamp, log_level, message)
                 VALUES (?, ?, ?, ?)
@@ -332,7 +371,7 @@ class TaskQueue:
 
     def get_logs(self, task_id: str) -> List[Dict[str, Any]]:
         """Retrieve all logs for a task"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT timestamp, log_level, message
@@ -342,3 +381,67 @@ class TaskQueue:
             """, (task_id,))
 
             return [dict(row) for row in cursor.fetchall()]
+
+    def acquire_task_for_execution(self) -> Optional[Task]:
+        """
+        Atomically get next COMMITTED task and mark as RUNNING
+
+        This method is thread-safe and designed for concurrent executor workers.
+        It uses BEGIN IMMEDIATE to acquire an exclusive lock before checking
+        and updating the task status.
+
+        Returns:
+            Task object if one was acquired, None if no COMMITTED tasks available
+        """
+        conn = self._get_connection()
+        try:
+            # BEGIN IMMEDIATE acquires a write lock immediately
+            conn.execute("BEGIN IMMEDIATE")
+
+            # Find the oldest COMMITTED task
+            cursor = conn.execute("""
+                SELECT task_id FROM tasks
+                WHERE status = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+            """, (TaskStatus.COMMITTED.value,))
+
+            row = cursor.fetchone()
+            if not row:
+                conn.rollback()
+                return None
+
+            task_id = row[0]
+
+            # Update to RUNNING
+            now = datetime.now().isoformat()
+            conn.execute("""
+                UPDATE tasks
+                SET status = ?, updated_at = ?, started_at = ?
+                WHERE task_id = ?
+            """, (TaskStatus.RUNNING.value, now, now, task_id))
+
+            conn.commit()
+
+            # Return the task (using a fresh read)
+            return self.get_task(task_id)
+
+        except Exception as e:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def count_running_tasks(self) -> int:
+        """
+        Count how many tasks are currently in RUNNING state
+
+        Returns:
+            Number of running tasks
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status = ?",
+                (TaskStatus.RUNNING.value,)
+            )
+            return cursor.fetchone()[0]

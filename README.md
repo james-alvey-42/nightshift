@@ -132,6 +132,15 @@ All NightShift data is stored in `~/.nightshift/`:
 - 📱 **Slack Integration** ⭐ **NEW!**
   Submit tasks, approve via buttons, get completion notifications
 
+- 🔀 **Concurrent Task Execution** ⭐ **NEW!**
+  Execute multiple tasks simultaneously with configurable worker pool
+
+- ⏱️ **Configurable Timeouts**
+  Set execution time limits per task (default: 15 minutes)
+
+- 🔐 **Cross-Process Control**
+  Manage executor service from any terminal
+
 </td>
 <td width="50%">
 
@@ -288,6 +297,44 @@ nightshift clear
 # Skip confirmation
 nightshift clear --confirm
 ```
+</details>
+
+<details>
+<summary><b>🔀 Concurrent Execution (NEW!)</b></summary>
+
+```bash
+# Start executor service (processes tasks in background)
+nightshift executor start
+
+# Start with custom settings
+nightshift executor start --workers 5 --poll-interval 2.0
+
+# Check executor status
+nightshift executor status
+
+# Stop executor service
+nightshift executor stop
+
+# Submit task with custom timeout (default: 900s / 15 minutes)
+nightshift submit "Download paper" --timeout 300
+
+# Submit and execute synchronously (wait for completion)
+nightshift submit "Quick task" --auto-approve --sync
+```
+
+**How it works:**
+- Executor polls the queue for `COMMITTED` tasks and executes them concurrently
+- Configure max workers (default: 3) and poll interval (default: 1.0s)
+- Each task has a configurable timeout to prevent runaway executions
+- Tasks can be submitted from multiple terminals/Slack simultaneously
+- Executor can be controlled from any terminal using PID file tracking
+
+**Benefits:**
+- ⚡ Multiple tasks execute in parallel
+- 🔄 Submit tasks while others are running
+- 🎯 No blocking - submit and move on
+- 🛡️ Timeouts prevent hanging tasks
+
 </details>
 
 ---
@@ -605,8 +652,12 @@ $ nightshift approve task_9b4e2c1a
 - 🎯 Task planner uses `claude -p` with `--json-schema` to ensure structured output
 - ⚙️ Executor uses `claude -p` with `--verbose --output-format stream-json`
 - 📸 File tracking takes snapshots before/after execution
-- ⏱️ No timeout by default during development (can be added later)
+- ⏱️ Configurable timeouts per task (default: 900s / 15 minutes)
 - 🔌 All Claude calls are subprocess executions (no SDK)
+- 🔀 ThreadPoolExecutor for concurrent task execution (not ProcessPoolExecutor, since Claude CLI already spawns subprocesses)
+- 🗄️ SQLite WAL mode for concurrent database access
+- 🔒 Atomic task acquisition with `BEGIN IMMEDIATE` to prevent race conditions
+- 📝 PID file tracking for cross-process executor control
 
 ### Slack Integration
 - 🔐 HMAC-SHA256 signature verification for all webhook requests

@@ -18,6 +18,7 @@ from ..core.agent_manager import AgentManager
 from ..core.logger import NightShiftLogger
 from ..core.config import Config
 from ..core.output_viewer import OutputViewer
+from ..core.task_executor import ExecutorManager
 
 
 # Initialize rich console for pretty output
@@ -52,11 +53,13 @@ def cli(ctx):
 @cli.command()
 @click.argument('description')
 @click.option('--auto-approve', is_flag=True, help='Skip approval and execute immediately')
+@click.option('--sync', is_flag=True, help='Execute synchronously (wait for completion), only with --auto-approve')
+@click.option('--timeout', default=900, type=int, help='Task execution timeout in seconds (default: 900 = 15 mins)')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
 @click.option('--allow-dir', multiple=True, help='Additional directories to allow writes (can be specified multiple times)')
 @click.option('--debug', is_flag=True, help='Show full command and sandbox profile')
 @click.pass_context
-def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
+def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allow_dir, debug):
     """Submit a new task (with sandbox isolation on macOS)"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -89,8 +92,7 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
             allowed_directories=allowed_directories,
             needs_git=plan.get('needs_git', False),
             system_prompt=plan['system_prompt'],
-            estimated_tokens=plan['estimated_tokens'],
-            estimated_time=plan['estimated_time']
+            timeout_seconds=timeout
         )
 
         logger.log_task_created(task_id, description)
@@ -109,7 +111,7 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
             f"[yellow]Enhanced prompt:[/yellow] {plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(plan['allowed_tools'])}\n\n"
             f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}{git_status}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{plan['estimated_tokens']} tokens, ~{plan['estimated_time']}s\n\n"
+            f"[yellow]Timeout:[/yellow] {timeout}s ({timeout // 60}m {timeout % 60}s)\n\n"
             f"[yellow]Reasoning:[/yellow] {plan.get('reasoning', 'N/A')}",
             title=f"Task Plan: {task_id}",
             border_style="blue"
@@ -117,7 +119,7 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
         console.print(panel)
 
         if auto_approve:
-            console.print(f"\n[bold yellow]Auto-approving and executing...[/bold yellow]")
+            console.print(f"\n[bold yellow]Auto-approving task...[/bold yellow]")
             task_queue.update_status(task_id, TaskStatus.COMMITTED)
             logger.log_task_approved(task_id)
 
@@ -159,16 +161,30 @@ def submit(ctx, description, auto_approve, planning_timeout, allow_dir, debug):
                     console.print(f"\n[bold cyan]🔍 Debug - Full command:[/bold cyan]")
                     console.print(f"[dim]{claude_cmd}[/dim]\n")
 
-            console.print(f"\n[bold blue]▶ Executing task...[/bold blue]\n")
-            result = agent_manager.execute_task(task)
+            # Execute synchronously or asynchronously
+            if sync:
+                # Synchronous execution (old behavior)
+                console.print(f"\n[bold blue]▶ Executing task (synchronous)...[/bold blue]\n")
+                result = agent_manager.execute_task(task)
 
-            if result['success']:
-                console.print(f"\n[bold green]✓ Task completed successfully![/bold green]")
-                console.print(f"Token usage: {result.get('token_usage', 'N/A')}")
-                console.print(f"Execution time: {result['execution_time']:.1f}s")
-                console.print(f"Results saved to: {result.get('result_path', 'N/A')}")
+                if result['success']:
+                    console.print(f"\n[bold green]✓ Task completed successfully![/bold green]")
+                    console.print(f"Token usage: {result.get('token_usage', 'N/A')}")
+                    console.print(f"Execution time: {result['execution_time']:.1f}s")
+                    console.print(f"Results saved to: {result.get('result_path', 'N/A')}")
+                else:
+                    console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}")
             else:
-                console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}")
+                # Asynchronous execution via executor (new default behavior)
+                console.print(f"\n[bold green]✓ Task queued for execution[/bold green]")
+                console.print(f"[dim]The task will be picked up by the executor service[/dim]")
+                console.print(f"\n[dim]Monitor progress:[/dim]")
+                console.print(f"  • nightshift watch {task_id}")
+                console.print(f"  • nightshift queue --status running")
+                console.print(f"  • nightshift executor status")
+                console.print(f"\n[dim]Start executor if not running:[/dim]")
+                console.print(f"  • nightshift executor start")
+                console.print()
         else:
             console.print(f"\n[dim]⏸  Status:[/dim] STAGED (waiting for approval)")
             console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
@@ -205,7 +221,7 @@ def queue(ctx, status):
     table.add_column("ID", style="cyan")
     table.add_column("Status", style="yellow")
     table.add_column("Description", style="white")
-    table.add_column("Est. Time", justify="right")
+    table.add_column("Timeout", justify="right")
     table.add_column("Created", style="dim")
 
     for task in tasks:
@@ -220,11 +236,13 @@ def queue(ctx, status):
             "cancelled": "dim"
         }.get(task.status, "white")
 
+        timeout_display = f"{task.timeout_seconds}s" if task.timeout_seconds else "900s"
+
         table.add_row(
             task.task_id,
             f"[{status_color}]{task.status.upper()}[/{status_color}]",
             task.description[:60] + "..." if len(task.description) > 60 else task.description,
-            f"{task.estimated_time}s" if task.estimated_time else "N/A",
+            timeout_display,
             task.created_at.split('T')[0] if task.created_at else "N/A"
         )
 
@@ -235,9 +253,10 @@ def queue(ctx, status):
 
 @cli.command()
 @click.argument('task_id')
+@click.option('--sync', is_flag=True, help='Execute synchronously (wait for completion)')
 @click.pass_context
-def approve(ctx, task_id):
-    """Approve and execute a staged task"""
+def approve(ctx, task_id, sync):
+    """Approve and queue a staged task for execution"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
     agent_manager = ctx.obj['agent_manager']
@@ -252,22 +271,36 @@ def approve(ctx, task_id):
         console.print(f"\n[bold red]Error:[/bold red] Task {task_id} is not in STAGED state (current: {task.status})\n")
         raise click.Abort()
 
-    # Update to COMMITTED and execute
+    # Update to COMMITTED
     task_queue.update_status(task_id, TaskStatus.COMMITTED)
     logger.log_task_approved(task_id)
 
     console.print(f"\n[bold green]✓ Task approved:[/bold green] {task_id}")
-    console.print(f"\n[bold blue]▶ Executing...[/bold blue]\n")
 
-    result = agent_manager.execute_task(task)
+    # Execute synchronously or asynchronously
+    if sync:
+        # Synchronous execution (old behavior)
+        console.print(f"\n[bold blue]▶ Executing task (synchronous)...[/bold blue]\n")
+        result = agent_manager.execute_task(task)
 
-    if result['success']:
-        console.print(f"\n[bold green]✓ Task completed successfully![/bold green]")
-        console.print(f"Token usage: {result.get('token_usage', 'N/A')}")
-        console.print(f"Execution time: {result['execution_time']:.1f}s")
-        console.print(f"Results saved to: {result.get('result_path', 'N/A')}\n")
+        if result['success']:
+            console.print(f"\n[bold green]✓ Task completed successfully![/bold green]")
+            console.print(f"Token usage: {result.get('token_usage', 'N/A')}")
+            console.print(f"Execution time: {result['execution_time']:.1f}s")
+            console.print(f"Results saved to: {result.get('result_path', 'N/A')}\n")
+        else:
+            console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}\n")
     else:
-        console.print(f"\n[bold red]✗ Task failed:[/bold red] {result.get('error')}\n")
+        # Asynchronous execution via executor (new default behavior)
+        console.print(f"\n[bold green]✓ Task queued for execution[/bold green]")
+        console.print(f"[dim]The task will be picked up by the executor service[/dim]")
+        console.print(f"\n[dim]Monitor progress:[/dim]")
+        console.print(f"  • nightshift watch {task_id}")
+        console.print(f"  • nightshift queue --status running")
+        console.print(f"  • nightshift executor status")
+        console.print(f"\n[dim]Start executor if not running:[/dim]")
+        console.print(f"  • nightshift executor start")
+        console.print()
 
 
 @cli.command()
@@ -318,8 +351,9 @@ def results(ctx, task_id, show_output):
 @cli.command()
 @click.argument('task_id')
 @click.argument('feedback')
+@click.option('--timeout', type=int, help='Override task execution timeout in seconds')
 @click.pass_context
-def revise(ctx, task_id, feedback):
+def revise(ctx, task_id, feedback, timeout):
     """Request plan revision with feedback for a staged task"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -344,21 +378,23 @@ def revise(ctx, task_id, feedback):
             'enhanced_prompt': task.description,
             'allowed_tools': task.allowed_tools or [],
             'system_prompt': task.system_prompt or '',
-            'estimated_tokens': task.estimated_tokens or 0,
-            'estimated_time': task.estimated_time or 0
+            'timeout_seconds': task.timeout_seconds or 900
         }
 
         # Use Claude to refine the plan
         revised_plan = task_planner.refine_plan(current_plan, feedback)
+
+        # Use timeout override if provided, otherwise use value from revised plan or current task
+        final_timeout = timeout if timeout is not None else (revised_plan.get('timeout_seconds') or task.timeout_seconds or 900)
 
         # Update task with revised plan
         success = task_queue.update_plan(
             task_id=task_id,
             description=revised_plan['enhanced_prompt'],
             allowed_tools=revised_plan['allowed_tools'],
+            allowed_directories=revised_plan.get('allowed_directories', []),
             system_prompt=revised_plan['system_prompt'],
-            estimated_tokens=revised_plan['estimated_tokens'],
-            estimated_time=revised_plan['estimated_time']
+            timeout_seconds=final_timeout
         )
 
         if not success:
@@ -370,10 +406,21 @@ def revise(ctx, task_id, feedback):
         # Display revised plan
         console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
 
+        # Format allowed directories for display
+        allowed_dirs = revised_plan.get('allowed_directories', [])
+        if allowed_dirs:
+            dirs_display = "\n  ".join([f"• {d}" for d in allowed_dirs])
+        else:
+            dirs_display = "  • [dim](none - read-only mode)[/dim]"
+
+        # Add git status if enabled
+        git_status = " + git support (device files)" if revised_plan.get('needs_git', False) else ""
+
         panel = Panel.fit(
             f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
             f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
+            f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}{git_status}\n\n"
+            f"[yellow]Timeout:[/yellow] {final_timeout}s ({final_timeout // 60}m {final_timeout % 60}s)\n\n"
             f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
             title=f"Revised Plan: {task_id}",
             border_style="green"
@@ -414,87 +461,6 @@ def display(ctx, task_id):
     viewer = OutputViewer()
     console.print()  # Add spacing
     viewer.display_task_output(task.result_path)
-
-
-@cli.command()
-@click.argument('task_id')
-@click.argument('feedback')
-@click.pass_context
-def revise(ctx, task_id, feedback):
-    """Request plan revision with feedback for a staged task"""
-    logger = ctx.obj['logger']
-    task_queue = ctx.obj['task_queue']
-    task_planner = ctx.obj['task_planner']
-
-    # Get task
-    task = task_queue.get_task(task_id)
-    if not task:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} not found\n")
-        raise click.Abort()
-
-    if task.status != TaskStatus.STAGED.value:
-        console.print(f"\n[bold red]Error:[/bold red] Task {task_id} is not in STAGED state (current: {task.status})\n")
-        console.print(f"[dim]Only staged tasks can be revised[/dim]\n")
-        raise click.Abort()
-
-    console.print(f"\n[bold blue]Revising plan based on feedback...[/bold blue]")
-
-    try:
-        # Build current plan from task
-        current_plan = {
-            'enhanced_prompt': task.description,
-            'allowed_tools': task.allowed_tools or [],
-            'allowed_directories': task.allowed_directories or [],
-            'system_prompt': task.system_prompt or '',
-            'estimated_tokens': task.estimated_tokens or 0,
-            'estimated_time': task.estimated_time or 0
-        }
-
-        # Use Claude to refine the plan
-        revised_plan = task_planner.refine_plan(current_plan, feedback)
-
-        # Update task with revised plan
-        success = task_queue.update_plan(
-            task_id=task_id,
-            description=revised_plan['enhanced_prompt'],
-            allowed_tools=revised_plan['allowed_tools'],
-            allowed_directories=revised_plan['allowed_directories'],
-            system_prompt=revised_plan['system_prompt'],
-            estimated_tokens=revised_plan['estimated_tokens'],
-            estimated_time=revised_plan['estimated_time']
-        )
-
-        if not success:
-            console.print(f"\n[bold red]Error:[/bold red] Failed to update task plan\n")
-            raise click.Abort()
-
-        task_queue.add_log(task_id, "INFO", f"Plan revised based on feedback: {feedback[:100]}")
-
-        # Display revised plan
-        console.print(f"\n[bold green]✓ Plan revised:[/bold green] {task_id}")
-
-        # Format directories display
-        dirs_display = "\n".join(f"  • {d}" for d in revised_plan.get('allowed_directories', [])) if revised_plan.get('allowed_directories') else "  (none)"
-
-        panel = Panel.fit(
-            f"[yellow]Revised prompt:[/yellow] {revised_plan['enhanced_prompt']}\n\n"
-            f"[yellow]Tools needed:[/yellow] {', '.join(revised_plan['allowed_tools'])}\n\n"
-            f"[yellow]Sandbox (write access):[/yellow]\n{dirs_display}\n\n"
-            f"[yellow]Estimated:[/yellow] ~{revised_plan['estimated_tokens']} tokens, ~{revised_plan['estimated_time']}s\n\n"
-            f"[yellow]Changes:[/yellow] {revised_plan.get('reasoning', 'N/A')}",
-            title=f"Revised Plan: {task_id}",
-            border_style="green"
-        )
-        console.print(panel)
-
-        console.print(f"\n[dim]Status:[/dim] STAGED (waiting for approval)")
-        console.print(f"[dim]Run 'nightshift approve {task_id}' to execute[/dim]")
-        console.print(f"[dim]Or 'nightshift revise {task_id} \"more feedback\"' to revise again[/dim]\n")
-
-    except Exception as e:
-        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
-        logger.error(f"Plan revision failed for {task_id}: {str(e)}")
-        raise click.Abort()
 
 
 @cli.command()
@@ -687,8 +653,9 @@ def watch(ctx, task_id, follow):
 @click.option('--port', default=5000, type=int, help='Port to run server on (default: 5000)')
 @click.option('--host', default='0.0.0.0', help='Host to bind to (default: 0.0.0.0)')
 @click.option('--daemon', is_flag=True, help='Run in background (not yet implemented)')
+@click.option('--no-executor', is_flag=True, help='Do not start task executor service')
 @click.pass_context
-def slack_server(ctx, port, host, daemon):
+def slack_server(ctx, port, host, daemon, no_executor):
     """Start Slack webhook server"""
     config = ctx.obj['config']
 
@@ -740,6 +707,21 @@ def slack_server(ctx, port, host, daemon):
     ctx.obj['agent_manager'].notifier.slack_client = slack_client
     ctx.obj['agent_manager'].notifier.slack_metadata = slack_metadata
 
+    # Start executor service if auto-start enabled
+    if config.executor_auto_start and not no_executor:
+        console.print("[dim]Starting task executor service...[/dim]")
+        try:
+            ExecutorManager.start_executor(
+                task_queue=ctx.obj['task_queue'],
+                agent_manager=ctx.obj['agent_manager'],
+                logger=ctx.obj['logger'],
+                max_workers=config.executor_max_workers,
+                poll_interval=config.executor_poll_interval
+            )
+            console.print(f"[green]✓ Executor started (max_workers={config.executor_max_workers})[/green]\n")
+        except Exception as e:
+            console.print(f"[yellow]⚠ Failed to start executor: {e}[/yellow]\n")
+
     console.print(f"[bold green]✓ Server starting on {host}:{port}[/bold green]")
     console.print(f"\n[dim]Webhook endpoints:[/dim]")
     console.print(f"  • POST http://{host}:{port}/slack/commands")
@@ -752,6 +734,10 @@ def slack_server(ctx, port, host, daemon):
         app.run(host=host, port=port, debug=False)
     except KeyboardInterrupt:
         console.print("\n\n[dim]Server stopped[/dim]\n")
+        # Stop executor if running
+        if config.executor_auto_start and not no_executor:
+            console.print("[dim]Stopping executor...[/dim]")
+            ExecutorManager.stop_executor(timeout=10.0)
 
 
 @cli.command()
@@ -854,6 +840,136 @@ def clear(ctx, confirm):
         console.print(f"\n[bold green]✓ Cleared all NightShift data[/bold green]\n")
     else:
         console.print(f"\n[dim]Nothing to clear[/dim]\n")
+
+
+# Executor command group
+@cli.group()
+def executor():
+    """Manage the task executor service"""
+    pass
+
+
+@executor.command()
+@click.option('--workers', type=int, help='Max concurrent workers (overrides config)')
+@click.option('--poll-interval', type=float, help='Polling interval in seconds (overrides config)')
+@click.pass_context
+def start(ctx, workers, poll_interval):
+    """Start the task executor service"""
+    config = ctx.obj['config']
+    logger = ctx.obj['logger']
+    task_queue = ctx.obj['task_queue']
+    agent_manager = ctx.obj['agent_manager']
+
+    # Use config values if not specified
+    max_workers = workers if workers is not None else config.executor_max_workers
+    poll_int = poll_interval if poll_interval is not None else config.executor_poll_interval
+
+    console.print(f"\n[bold blue]Starting task executor...[/bold blue]")
+    console.print(f"[dim]Max workers: {max_workers}[/dim]")
+    console.print(f"[dim]Poll interval: {poll_int}s[/dim]\n")
+
+    try:
+        executor = ExecutorManager.start_executor(
+            task_queue=task_queue,
+            agent_manager=agent_manager,
+            logger=logger,
+            max_workers=max_workers,
+            poll_interval=poll_int
+        )
+
+        console.print(f"[bold green]✓ Executor service started[/bold green]")
+        console.print(f"\n[dim]The executor will poll for COMMITTED tasks every {poll_int}s[/dim]")
+        console.print(f"[dim]Run 'nightshift executor stop' to shut down[/dim]")
+        console.print(f"[dim]Or Ctrl+C to stop[/dim]\n")
+
+        # Keep running until interrupted
+        import signal
+        import time
+
+        def signal_handler(sig, frame):
+            console.print(f"\n\n[yellow]Shutting down...[/yellow]")
+            ExecutorManager.stop_executor(timeout=30.0)
+            console.print(f"[dim]Executor stopped[/dim]\n")
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # Keep main thread alive
+        while executor.is_running:
+            time.sleep(1)
+
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@executor.command()
+@click.option('--timeout', default=30.0, type=float, help='Timeout for graceful shutdown (seconds)')
+@click.pass_context
+def stop(ctx, timeout):
+    """Stop the task executor service"""
+    console.print(f"\n[bold yellow]Stopping task executor...[/bold yellow]\n")
+
+    try:
+        ExecutorManager.stop_executor(timeout=timeout)
+        console.print(f"[bold green]✓ Executor stopped[/bold green]\n")
+    except Exception as e:
+        console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+        raise click.Abort()
+
+
+@executor.command()
+@click.pass_context
+def status(ctx):
+    """Show executor service status"""
+    task_queue = ctx.obj['task_queue']
+
+    status = ExecutorManager.get_status()
+
+    console.print(f"\n[bold cyan]Task Executor Status[/bold cyan]\n")
+
+    # Create status table
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Setting", style="yellow")
+    table.add_column("Value", style="white")
+
+    if status['is_running']:
+        table.add_row("Status", "[green]● Running[/green]")
+    else:
+        table.add_row("Status", "[red]○ Stopped[/red]")
+
+    table.add_row("Max Workers", str(status['max_workers']))
+
+    # Handle "unknown" running tasks (when checking from another process)
+    running_tasks_display = str(status['running_tasks'])
+    if status['running_tasks'] == "unknown":
+        running_tasks_display = "[dim]unknown (other process)[/dim]"
+    table.add_row("Running Tasks", running_tasks_display)
+
+    table.add_row("Available Workers", str(status['available_workers']))
+    table.add_row("Poll Interval", f"{status['poll_interval']}s")
+
+    # Show PID if available (executor in another process)
+    if 'pid' in status:
+        table.add_row("Process ID", f"[dim]{status['pid']}[/dim]")
+
+    console.print(table)
+
+    # Show queue stats
+    committed_tasks = task_queue.list_tasks(TaskStatus.COMMITTED)
+    running_tasks = task_queue.list_tasks(TaskStatus.RUNNING)
+
+    console.print(f"\n[bold cyan]Queue Status[/bold cyan]\n")
+
+    queue_table = Table(show_header=True, header_style="bold")
+    queue_table.add_column("Queue", style="yellow")
+    queue_table.add_column("Count", style="white", justify="right")
+
+    queue_table.add_row("Committed (waiting)", str(len(committed_tasks)))
+    queue_table.add_row("Running", str(len(running_tasks)))
+
+    console.print(queue_table)
+    console.print()
 
 
 def main():
