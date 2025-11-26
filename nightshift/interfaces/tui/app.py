@@ -23,7 +23,7 @@ def create_app() -> Application:
 
     # Initialize backends
     cfg = Config()
-    logger = NightShiftLogger(log_dir=str(cfg.get_log_dir()))
+    logger = NightShiftLogger(log_dir=str(cfg.get_log_dir()), console_output=False)
     queue = TaskQueue(db_path=str(cfg.get_database_path()))
     planner = TaskPlanner(logger, tools_reference_path=str(cfg.get_tools_reference_path()))
     agent = AgentManager(queue, logger, output_dir=str(cfg.get_output_dir()))
@@ -32,7 +32,7 @@ def create_app() -> Application:
     state = UIState()
 
     # Create controller
-    controller = TUIController(state, queue, cfg)
+    controller = TUIController(state, queue, cfg, planner, agent, logger)
 
     # Load initial tasks via controller
     controller.refresh_tasks()

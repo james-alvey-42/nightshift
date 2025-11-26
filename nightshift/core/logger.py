@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 class NightShiftLogger:
     """Structured logger for agent activities"""
 
-    def __init__(self, log_dir: str = "logs"):
+    def __init__(self, log_dir: str = "logs", console_output: bool = True):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -20,13 +20,18 @@ class NightShiftLogger:
         self.logger = logging.getLogger("nightshift")
         self.logger.setLevel(logging.DEBUG)
 
-        # Console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_formatter = logging.Formatter(
-            "[%(levelname)s] %(message)s"
-        )
-        console_handler.setFormatter(console_formatter)
+        # Clear any existing handlers to prevent duplicates
+        self.logger.handlers.clear()
+
+        # Console handler (optional, disabled for TUI to prevent interference)
+        if console_output:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            console_formatter = logging.Formatter(
+                "[%(levelname)s] %(message)s"
+            )
+            console_handler.setFormatter(console_formatter)
+            self.logger.addHandler(console_handler)
 
         # File handler (all logs)
         file_handler = logging.FileHandler(
@@ -38,7 +43,6 @@ class NightShiftLogger:
         )
         file_handler.setFormatter(file_formatter)
 
-        self.logger.addHandler(console_handler)
         self.logger.addHandler(file_handler)
 
     def log_task_created(self, task_id: str, description: str):

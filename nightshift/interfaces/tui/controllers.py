@@ -3,20 +3,70 @@ TUI Controllers
 Business logic layer that interfaces with NightShift core
 """
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
-from nightshift.core.task_queue import TaskQueue
+
+from prompt_toolkit.application.current import get_app
+
 from nightshift.core.config import Config
+from nightshift.core.logger import NightShiftLogger
+from nightshift.core.task_queue import TaskQueue, TaskStatus
+from nightshift.core.task_planner import TaskPlanner
+from nightshift.core.agent_manager import AgentManager
+
 from .models import UIState, SelectedTaskState, task_to_row
 
 
 class TUIController:
     """Controller for TUI operations"""
 
-    def __init__(self, state: UIState, queue: TaskQueue, config: Config):
+    def __init__(
+        self,
+        state: UIState,
+        queue: TaskQueue,
+        config: Config,
+        planner: TaskPlanner,
+        agent: AgentManager,
+        logger: NightShiftLogger,
+    ):
         self.state = state
         self.queue = queue
         self.config = config
+        self.planner = planner
+        self.agent = agent
+        self.logger = logger
+
+    # ----- internal helpers -----
+
+    def _invalidate(self):
+        """Request a UI redraw (safe to call from any thread)."""
+        try:
+            get_app().invalidate()
+        except Exception:
+            pass
+
+    def _run_in_thread(self, label: str, target, *args, **kwargs):
+        """Run blocking work in a background thread with busy state."""
+        self.state.busy = True
+        self.state.busy_label = label
+        self._invalidate()
+
+        def worker():
+            try:
+                target(*args, **kwargs)
+            finally:
+                # Clear busy state, but keep any message set by worker
+                self.state.busy = False
+                self.state.busy_label = ""
+                # Refresh tasks so list reflects latest status
+                try:
+                    self.refresh_tasks()
+                except Exception:
+                    pass
+                self._invalidate()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def load_selected_task_details(self):
         """Load details for the currently selected task"""
@@ -140,6 +190,10 @@ class TUIController:
             self._cmd_status(args)
         elif cmd == "results":
             self._cmd_results(args)
+        elif cmd in ("submit", "submit!"):
+            auto = cmd.endswith("!")
+            desc = " ".join(args)
+            self.submit_task(desc, auto_approve=auto)
         elif cmd == "help" or cmd == "h":
             self._cmd_help()
         elif cmd == "quit" or cmd == "q":
@@ -204,4 +258,106 @@ class TUIController:
 
     def _cmd_help(self):
         """Handle :help command"""
-        self.state.message = "Commands: :queue [status] | :status <task_id> | :results [task_id] | :help | :quit"
+        self.state.message = "Commands: :queue [status] | :status <task_id> | :results [task_id] | :submit <desc> | :help | :quit"
+
+    # ----- Phase 3 actions: submit/approve/reject -----
+
+    def submit_task(self, description: str, auto_approve: bool = False):
+        """
+        Plan and create a new task using TaskPlanner + TaskQueue.
+        Optionally auto-approve & execute.
+        """
+        description = (description or "").strip()
+        if not description:
+            self.state.message = "Submit: description is required"
+            return
+
+        def work():
+            try:
+                # Plan task
+                plan = self.planner.plan_task(description)
+
+                # Create task in queue
+                task = self.queue.create_task(
+                    description=plan.get("enhanced_prompt", description),
+                    allowed_tools=plan.get("allowed_tools") or [],
+                    allowed_directories=plan.get("allowed_directories") or [],
+                    needs_git=plan.get("needs_git", False),
+                    system_prompt=plan.get("system_prompt", ""),
+                    estimated_tokens=plan.get("estimated_tokens"),
+                    estimated_time=plan.get("estimated_time"),
+                )
+
+                task_id = task.task_id
+                self.logger.info(f"TUI: created task {task_id}")
+                self.state.message = f"Created task {task_id}"
+
+                if auto_approve:
+                    # Approve & execute
+                    self.queue.update_status(task_id, TaskStatus.COMMITTED)
+                    self.logger.info(f"TUI: auto-approved {task_id}")
+                    self.state.message = f"Executing {task_id}..."
+                    # Execute in this same worker thread (already background)
+                    self.agent.execute_task(task)
+
+            except Exception as e:
+                self.state.message = f"Submit failed: {e}"
+
+        label = "Planning task..." if not auto_approve else "Planning & executing..."
+        self._run_in_thread(label, work)
+
+    def approve_selected_task(self):
+        """Approve currently selected STAGED task and start execution."""
+        if not self.state.tasks:
+            self.state.message = "No task selected"
+            return
+
+        row = self.state.tasks[self.state.selected_index]
+        task = self.queue.get_task(row.task_id)
+        if not task:
+            self.state.message = f"Task not found: {row.task_id}"
+            return
+
+        if task.status != TaskStatus.STAGED.value:
+            self.state.message = "Approve: task is not STAGED"
+            return
+
+        def work():
+            try:
+                # Mark committed and execute
+                self.queue.update_status(task.task_id, TaskStatus.COMMITTED)
+                self.logger.info(f"TUI: approved {task.task_id}")
+                self.state.message = f"Executing {task.task_id}..."
+                # Re-fetch to ensure latest state, if needed
+                t = self.queue.get_task(task.task_id) or task
+                self.agent.execute_task(t)
+                self.state.message = f"Task {task.task_id} completed (or running)"
+            except Exception as e:
+                self.state.message = f"Approve failed: {e}"
+
+        self._run_in_thread(f"Executing {task.task_id}...", work)
+
+    def reject_selected_task(self):
+        """Reject/cancel the selected task (STAGED or COMMITTED)."""
+        if not self.state.tasks:
+            self.state.message = "No task selected"
+            return
+
+        row = self.state.tasks[self.state.selected_index]
+        task = self.queue.get_task(row.task_id)
+        if not task:
+            self.state.message = f"Task not found: {row.task_id}"
+            return
+
+        if task.status not in (TaskStatus.STAGED.value, TaskStatus.COMMITTED.value):
+            self.state.message = "Reject: only STAGED/COMMITTED can be cancelled"
+            return
+
+        try:
+            self.queue.update_status(task.task_id, TaskStatus.CANCELLED)
+            self.logger.info(f"TUI: cancelled {task.task_id}")
+            self.state.message = f"Cancelled {task.task_id}"
+            # Refresh immediately
+            self.refresh_tasks()
+        except Exception as e:
+            self.state.message = f"Reject failed: {e}"

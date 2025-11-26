@@ -5,6 +5,7 @@ Vi-style keymaps for NightShift
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.application.current import get_app
+from prompt_toolkit.shortcuts import input_dialog
 from .models import UIState
 
 
@@ -98,6 +99,43 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
         controller.refresh_tasks()
         state.message = "Refreshed"
         get_app().invalidate()
+
+    # Phase 3: Task actions
+    # Approve selected STAGED task
+    @kb.add('a', filter=is_normal_mode)
+    def _(event):
+        """Approve selected task"""
+        controller.approve_selected_task()
+        get_app().invalidate()
+
+    # Reject/cancel selected task
+    @kb.add('r', filter=is_normal_mode)
+    def _(event):
+        """Reject/cancel selected task"""
+        controller.reject_selected_task()
+        get_app().invalidate()
+
+    # Submit new task (simple prompt)
+    @kb.add('s', filter=is_normal_mode)
+    def _(event):
+        """
+        Submit new task.
+        Opens a simple blocking input dialog for description,
+        then calls controller.submit_task().
+        """
+        app = get_app()
+
+        async def _prompt_and_submit():
+            # input_dialog is async-friendly helper
+            desc = await input_dialog(
+                title="Submit Task",
+                text="Describe the task:"
+            ).run_async()
+            if desc:
+                controller.submit_task(desc, auto_approve=False)
+                app.invalidate()
+
+        app.create_background_task(_prompt_and_submit())
 
     # Command mode: enter with :
     @kb.add(':', filter=is_normal_mode)
