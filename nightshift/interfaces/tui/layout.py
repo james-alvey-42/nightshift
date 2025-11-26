@@ -2,13 +2,26 @@
 TUI Layout
 prompt_toolkit layout configuration
 """
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window
-from prompt_toolkit.layout.containers import FloatContainer
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, Float
+from prompt_toolkit.layout.containers import FloatContainer, ConditionalContainer
+from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.filters import Condition
 from .models import UIState
 from .widgets import create_task_list_window, create_detail_window, create_status_bar
 
 
-def create_root_container(state: UIState):
+def create_command_line(state: UIState):
+    """Create the command line widget"""
+    return TextArea(
+        height=1,
+        prompt=':',
+        style='class:commandline',
+        multiline=False,
+        wrap_lines=False,
+    )
+
+
+def create_root_container(state: UIState, cmd_widget):
     """Create the root container for the TUI"""
 
     # Main body: task list | separator | detail panel
@@ -27,18 +40,29 @@ def create_root_container(state: UIState):
         status,
     ])
 
-    # Wrap in FloatContainer for future modals
+    # Command line (shown when command_active)
+    command_line_container = ConditionalContainer(
+        content=cmd_widget,
+        filter=Condition(lambda: state.command_active),
+    )
+
+    # Wrap in FloatContainer for command line and future modals
     float_container = FloatContainer(
         content=root,
         floats=[
-            # Modals will go here in later phases
+            Float(
+                bottom=0,
+                left=0,
+                right=0,
+                content=command_line_container,
+            ),
         ],
     )
 
     return float_container
 
 
-def create_layout(state: UIState) -> Layout:
+def create_layout(state: UIState, cmd_widget) -> Layout:
     """Create the prompt_toolkit Layout"""
-    root = create_root_container(state)
+    root = create_root_container(state, cmd_widget)
     return Layout(root)

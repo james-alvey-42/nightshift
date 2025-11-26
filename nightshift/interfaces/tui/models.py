@@ -55,8 +55,6 @@ class UIState:
 
 def task_to_row(task) -> TaskRow:
     """Convert a Task object to a TaskRow for display"""
-    from nightshift.core.task_queue import Task
-
     status_upper = task.status.upper()
     emoji_map = {
         "STAGED": "📝",
