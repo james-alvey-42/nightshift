@@ -260,6 +260,13 @@ class TaskQueue:
 
             tasks = []
             for row in cursor.fetchall():
+                # Handle timeout_seconds with fallback to estimated_time for backwards compat
+                timeout_val = row.get("timeout_seconds")
+                if timeout_val is None and "estimated_time" in row.keys():
+                    timeout_val = row["estimated_time"]  # Fallback for old tasks
+                if timeout_val is None:
+                    timeout_val = 900  # Default 15 minutes
+
                 tasks.append(Task(
                     task_id=row["task_id"],
                     description=row["description"],
@@ -270,7 +277,7 @@ class TaskQueue:
                     needs_git=bool(row["needs_git"]) if row["needs_git"] is not None else None,
                     system_prompt=row["system_prompt"],
                     estimated_tokens=row["estimated_tokens"],
-                    estimated_time=row["estimated_time"],
+                    timeout_seconds=timeout_val,
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     started_at=row["started_at"],
