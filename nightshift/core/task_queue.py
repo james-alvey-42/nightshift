@@ -215,7 +215,7 @@ class TaskQueue:
                 return None
 
             # Handle timeout_seconds with fallback to estimated_time for backwards compat
-            timeout_val = row.get("timeout_seconds")
+            timeout_val = row["timeout_seconds"] if "timeout_seconds" in row.keys() else None
             if timeout_val is None and "estimated_time" in row.keys():
                 timeout_val = row["estimated_time"]  # Fallback for old tasks
             if timeout_val is None:
@@ -261,7 +261,7 @@ class TaskQueue:
             tasks = []
             for row in cursor.fetchall():
                 # Handle timeout_seconds with fallback to estimated_time for backwards compat
-                timeout_val = row.get("timeout_seconds")
+                timeout_val = row["timeout_seconds"] if "timeout_seconds" in row.keys() else None
                 if timeout_val is None and "estimated_time" in row.keys():
                     timeout_val = row["estimated_time"]  # Fallback for old tasks
                 if timeout_val is None:
