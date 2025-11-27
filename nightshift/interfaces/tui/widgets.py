@@ -345,10 +345,12 @@ class StatusBarControl(FormattedTextControl):
 
 def create_task_list_window(state: UIState) -> Window:
     """Create the task list window"""
+    from prompt_toolkit.layout.dimension import Dimension
     return Window(
         TaskListControl(state),
         wrap_lines=False,
         always_hide_cursor=True,
+        width=Dimension(min=40, preferred=60),  # Fixed width to prevent resizing
     )
 
 

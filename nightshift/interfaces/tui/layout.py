@@ -25,6 +25,7 @@ def create_root_container(state: UIState, cmd_widget):
     """Create the root container for the TUI"""
 
     # Main body: task list | separator | detail panel
+    # Task list has fixed preferred width, detail panel expands to fill remaining space
     body = VSplit([
         create_task_list_window(state),
         Window(width=1, char='│', style='class:separator'),
