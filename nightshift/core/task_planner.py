@@ -149,31 +149,12 @@ Guidelines:
             # Prepare environment without ANTHROPIC_API_KEY to use Claude Pro authentication
             # via CLAUDE_CODE_OAUTH_TOKEN (obtained from 'claude setup-token')
             env = dict(os.environ)
-
-            # Debug: Log ALL environment variables
-            self.logger.info("=" * 80)
-            self.logger.info("[TaskPlanner] FULL ENVIRONMENT DUMP:")
-            for k, v in sorted(env.items()):
-                display_val = v[:50] + "..." if len(v) > 50 else v
-                self.logger.info(f"  {k} = {display_val}")
-            self.logger.info("=" * 80)
-
-            # Debug: Log all auth-related environment variables
-            auth_vars = {k: v[:20] + "..." if len(v) > 20 else v
-                        for k, v in env.items()
-                        if 'ANTHROPIC' in k or 'CLAUDE' in k or 'TOKEN' in k}
-            self.logger.info(f"[TaskPlanner] Auth-related environment variables: {auth_vars}")
-
             if 'ANTHROPIC_API_KEY' in env:
                 del env['ANTHROPIC_API_KEY']
-                self.logger.info("[TaskPlanner] Removed ANTHROPIC_API_KEY")
 
             # Verify OAuth token is present
-            if 'CLAUDE_CODE_OAUTH_TOKEN' in env:
-                self.logger.info(f"[TaskPlanner] Using CLAUDE_CODE_OAUTH_TOKEN (token: {env['CLAUDE_CODE_OAUTH_TOKEN'][:20]}...)")
-            else:
-                self.logger.warning("[TaskPlanner] CLAUDE_CODE_OAUTH_TOKEN not found. Run 'claude setup-token' to configure.")
-                self.logger.warning(f"[TaskPlanner] Available keys: {sorted([k for k in env.keys() if 'CLAUDE' in k or 'ANTHROPIC' in k])}")
+            if 'CLAUDE_CODE_OAUTH_TOKEN' not in env:
+                self.logger.warning("CLAUDE_CODE_OAUTH_TOKEN not found. Run 'claude setup-token' and add to shell profile.")
 
             result = subprocess.run(
                 cmd,
