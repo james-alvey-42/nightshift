@@ -695,10 +695,20 @@ class TUIController:
 
             # Create temp file with current task details as comments
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-                # Put current description at top for editing
-                f.write(task.description + "\n\n")
-                f.write("# Review and edit the task description above\n")
-                f.write("# Original task details shown below (read-only reference):\n")
+                # Show original description in comments
+                f.write("# ORIGINAL DESCRIPTION:\n")
+                for line in task.description.splitlines():
+                    f.write(f"# {line}\n")
+                f.write("#\n")
+                f.write("# Write your feedback/changes below:\n")
+                f.write("# (What do you want to change about this task?)\n")
+                f.write("#\n\n")
+
+                # Blank area for user feedback
+                f.write("\n\n")
+
+                # Original plan details as reference
+                f.write("# ---------- ORIGINAL PLAN (reference) ----------\n")
                 f.write(f"# Task ID: {task.task_id}\n")
                 f.write(f"# Status: {task.status}\n")
                 if task.allowed_tools:
@@ -721,18 +731,18 @@ class TUIController:
             with open(temp_path, 'r') as f:
                 lines = f.readlines()
 
-            # Filter out comments and empty lines
-            edited_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
-            edited_desc = ''.join(edited_lines).strip()
+            # Filter out comments and empty lines to get feedback
+            feedback_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
+            feedback = ''.join(feedback_lines).strip()
 
             Path(temp_path).unlink()
 
-            # If unchanged or empty, cancel
-            if not edited_desc or edited_desc == task.description:
-                self.state.message = "Review cancelled: no changes made"
+            # If no feedback provided, cancel
+            if not feedback:
+                self.state.message = "Review cancelled: no feedback provided"
                 return
 
-            # User changed the description - refine the plan
+            # User provided feedback - refine the plan
             self.state.message = f"Refining plan for {task.task_id}..."
 
             # Build current plan dict
@@ -746,8 +756,8 @@ class TUIController:
                 "estimated_time": task.estimated_time or 0,
             }
 
-            # Refine plan with new description as feedback
-            refined_plan = self.planner.refine_plan(current_plan, edited_desc)
+            # Refine plan based on user feedback
+            refined_plan = self.planner.refine_plan(current_plan, feedback)
 
             # Update the task
             success = self.queue.update_plan(
