@@ -44,8 +44,11 @@ nightshift clear
 # Run all tests
 pytest
 
+# Run only TUI tests
+pytest tests/tui/
+
 # Run specific test file
-pytest tests/test_controller_exec_log.py
+pytest tests/tui/test_controller_exec_log.py
 
 # Run with verbose output
 pytest -v
@@ -55,17 +58,31 @@ pytest --cov=nightshift
 ```
 
 **Test Suite Structure:**
-- `tests/conftest.py`: Mock fixtures (DummyQueue, DummyConfig, DummyPlanner, DummyAgent, DummyLogger)
-- `tests/test_controller_exec_log.py`: Controller exec log loading and real-time updates (9 tests)
-- `tests/test_exec_log_formatting.py`: Helper function tests for formatting and text extraction (13 tests)
-- `tests/test_controller_files_summary.py`: File tracking and summary loading (6 tests)
+```
+tests/
+├── conftest.py                        # Shared fixtures for all tests
+└── tui/                              # TUI-specific tests (63 tests)
+    ├── test_app_integration.py       # Integration tests (4 tests)
+    ├── test_controller_exec_log.py   # Controller exec log tests (9 tests)
+    ├── test_controller_files_summary.py  # File tracking tests (6 tests)
+    ├── test_exec_log_formatting.py   # Formatting helpers (13 tests)
+    ├── test_widgets_detail.py        # DetailControl tests (24 tests)
+    └── test_widgets_task_list.py     # TaskListControl tests (7 tests)
+```
 
-**Current Coverage:** 28 tests covering TUI controller logic and helpers with mocked backends.
+**Testing Strategy (3-Layer Approach):**
+1. ✅ **Step 1 - Controller Unit Tests** (28 tests): Controller logic with mocked backends
+2. ✅ **Step 2 - Widget Rendering Tests** (31 tests): Widget output verification
+3. ✅ **Step 3 - Integration Tests** (4 tests): Keybindings and UI wiring via prompt_toolkit
 
-**Testing Strategy:**
-1. Step 1 (✅ Complete): Controller unit tests with mocked backends
-2. Step 2 (Pending): Widget rendering tests
-3. Step 3 (Pending): Minimal integration tests with prompt_toolkit
+**Test Doubles:**
+- Located in `nightshift/interfaces/tui/testing_doubles.py`
+- Shared mocks: DummyQueue, DummyConfig, DummyPlanner, DummyAgent, DummyLogger
+
+**CI/CD:**
+- GitHub Actions workflow in `.github/workflows/test.yml`
+- Tests run on Python 3.10, 3.11, 3.12, 3.13
+- Triggered on push to main and feature/* branches, and on pull requests
 
 ## Architecture
 
