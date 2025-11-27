@@ -348,7 +348,7 @@ def create_task_list_window(state: UIState) -> Window:
     from prompt_toolkit.layout.dimension import Dimension
     return Window(
         TaskListControl(state),
-        width=Dimension.exact(50),
+        width=Dimension.exact(79),
         wrap_lines=False,
         always_hide_cursor=True,
     )
