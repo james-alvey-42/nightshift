@@ -19,6 +19,47 @@ from nightshift.core.agent_manager import AgentManager
 from .models import UIState, SelectedTaskState, task_to_row
 
 
+def extract_claude_text_from_result(result_path: str) -> str:
+    """
+    Parse stream-json 'stdout' from result_path and extract Claude's text
+    (content_block_delta events of type 'text_delta') into a single string.
+    This mirrors SlackFormatter.format_completion_notification behavior.
+    """
+    if not result_path:
+        return ""
+
+    p = Path(result_path)
+    if not p.exists():
+        return ""
+
+    try:
+        with p.open("r") as f:
+            data = json.load(f)
+    except Exception:
+        return ""
+
+    stdout = data.get("stdout", "")
+    if not stdout:
+        return ""
+
+    text_blocks = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        if event.get("type") == "content_block_delta":
+            delta = event.get("delta", {})
+            if delta.get("type") == "text_delta":
+                text_blocks.append(delta.get("text", ""))
+
+    return "".join(text_blocks).strip()
+
+
 class TUIController:
     """Controller for TUI operations"""
 
@@ -139,9 +180,18 @@ class TUIController:
 
         try:
             with open(notif_path) as f:
-                return json.load(f)
+                info = json.load(f)
         except Exception:
             return None
+
+        # Attach Claude's response text (for "What NightShift found/created")
+        result_path = info.get("result_path") or getattr(task, "result_path", None)
+        if result_path:
+            claude = extract_claude_text_from_result(result_path)
+            if claude:
+                info["claude_summary"] = claude
+
+        return info
 
     def refresh_tasks(self):
         """Refresh task list from queue, applying filters"""

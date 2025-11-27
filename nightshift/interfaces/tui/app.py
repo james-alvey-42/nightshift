@@ -64,6 +64,23 @@ def create_app() -> Application:
         "green": "fg:ansigreen",
         "red": "fg:ansired",
         "ansired": "fg:ansired",
+
+        # New detail panel helpers
+        "heading": "bold underline",
+        "section-title": "bold fg:ansicyan",
+        "success": "fg:ansigreen bold",
+        "error": "fg:ansired bold",
+
+        # File change styles
+        "file-created-title": "bold fg:ansigreen",
+        "file-modified-title": "bold fg:ansiyellow",
+        "file-deleted-title": "bold fg:ansired",
+        "file-created": "fg:ansigreen",
+        "file-modified": "fg:ansiyellow",
+        "file-deleted": "fg:ansired",
+
+        # Error codeblock style
+        "error-codeblock": "fg:ansired bg:#330000",
     })
 
     # Create application

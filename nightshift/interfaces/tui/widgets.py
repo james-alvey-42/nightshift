@@ -7,6 +7,15 @@ from prompt_toolkit.layout import Window
 from .models import UIState
 
 
+def _truncate(text: str, max_len: int) -> str:
+    """Truncate text to max_len characters, adding '...' if truncated"""
+    if text is None:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return text[:max_len - 3] + "..."
+
+
 class TaskListControl(FormattedTextControl):
     """Control for displaying the task list"""
 
@@ -138,74 +147,156 @@ class DetailControl(FormattedTextControl):
                 lines.append(("class:dim", "No execution log available\n"))
 
         elif tab == "files":
-            lines.append(("bold", "File Changes\n\n"))
-            if st.files_info:
-                created = st.files_info.get('created', [])
-                modified = st.files_info.get('modified', [])
-                deleted = st.files_info.get('deleted', [])
+            lines.append(("class:heading", "📁 File Changes\n\n"))
+            fi = st.files_info
 
-                if created:
-                    lines.append(("green", f"Created ({len(created)}):\n"))
-                    for f in created[:10]:
-                        lines.append(("", f"  • {f}\n"))
-
-                if modified:
-                    lines.append(("yellow", f"Modified ({len(modified)}):\n"))
-                    for f in modified[:10]:
-                        lines.append(("", f"  • {f}\n"))
-
-                if deleted:
-                    lines.append(("red", f"Deleted ({len(deleted)}):\n"))
-                    for f in deleted[:10]:
-                        lines.append(("", f"  • {f}\n"))
+            if not fi or not any(fi.get(k) for k in ("created", "modified", "deleted")):
+                lines.append(("class:dim", "No file changes recorded for this task.\n"))
             else:
-                lines.append(("class:dim", "No file changes\n"))
+                created = fi.get('created') or []
+                modified = fi.get('modified') or []
+                deleted = fi.get('deleted') or []
+
+                max_per_section = 20  # show more here than summary tab
+
+                # Created
+                if created:
+                    total = len(created)
+                    lines.append(("class:file-created-title", f"✨ Created ({total})\n"))
+                    for path in created[:max_per_section]:
+                        lines.append(("class:file-created", f"  • {path}\n"))
+                    if total > max_per_section:
+                        remaining = total - max_per_section
+                        lines.append(("class:dim", f"  ... {remaining} more created files not shown\n"))
+                    lines.append(("", "\n"))
+
+                # Modified
+                if modified:
+                    total = len(modified)
+                    lines.append(("class:file-modified-title", f"✏️ Modified ({total})\n"))
+                    for path in modified[:max_per_section]:
+                        lines.append(("class:file-modified", f"  • {path}\n"))
+                    if total > max_per_section:
+                        remaining = total - max_per_section
+                        lines.append(("class:dim", f"  ... {remaining} more modified files not shown\n"))
+                    lines.append(("", "\n"))
+
+                # Deleted
+                if deleted:
+                    total = len(deleted)
+                    lines.append(("class:file-deleted-title", f"🗑️ Deleted ({total})\n"))
+                    for path in deleted[:max_per_section]:
+                        lines.append(("class:file-deleted", f"  • {path}\n"))
+                    if total > max_per_section:
+                        remaining = total - max_per_section
+                        lines.append(("class:dim", f"  ... {remaining} more deleted files not shown\n"))
+                    lines.append(("", "\n"))
 
         elif tab == "summary":
-            lines.append(("bold", "Task Summary\n\n"))
-            if not st.summary_info:
+            info = st.summary_info
+            if not info:
+                lines.append(("bold", "Task Summary\n\n"))
                 lines.append(("class:dim", "No summary available\n"))
             else:
-                info = st.summary_info
+                lines.append(("class:heading", "📊 Task Summary\n\n"))
 
-                # Status with emoji
-                status = info.get("status", "").upper()
-                status_emoji = "✅" if status == "SUCCESS" else "❌"
-                status_color = "green" if status == "SUCCESS" else "red"
-                lines.append((status_color, f"{status_emoji} {status}\n\n"))
+                # --- Status header (SUCCESS/FAILED) ---
+                raw_status = (info.get("status") or "").lower()
+                status_text = "SUCCESS" if raw_status == "success" else "FAILED"
+                status_emoji = "✅" if raw_status == "success" else "❌"
+                status_color = "class:success" if raw_status == "success" else "class:error"
 
-                # Basic info
-                lines.append(("", f"Description: {info.get('description', '')}\n"))
-                lines.append(("", f"Completed: {info.get('timestamp', '')}\n"))
-                lines.append(("", f"Execution Time: {info.get('execution_time', 0):.1f}s\n"))
+                header = f"{status_emoji} Task {status_text}: {info.get('task_id', st.task_id or '')}\n\n"
+                lines.append((status_color, header))
 
-                if info.get("token_usage") is not None:
-                    lines.append(("", f"Token Usage: {info['token_usage']}\n"))
+                # --- What you asked for ---
+                desc = info.get("description", "No description")
+                desc = _truncate(desc, 500)
+                lines.append(("class:section-title", "🎯 What you asked for\n"))
+                lines.append(("", "-" * 40 + "\n"))
+                lines.append(("", desc + "\n\n"))
 
+                # --- What NightShift found/created ---
+                claude_text = info.get("claude_summary") or ""
+                if claude_text:
+                    claude_text = _truncate(claude_text.strip(), 1200)
+                    lines.append(("class:section-title", "🤖 What NightShift found/created\n"))
+                    lines.append(("", "-" * 40 + "\n"))
+                    lines.append(("", claude_text + "\n\n"))
+
+                # --- Execution metrics ---
+                exec_time = info.get("execution_time", 0.0) or 0.0
+                token_usage = info.get("token_usage")
+                lines.append(("class:section-title", "📈 Execution metrics\n"))
+                lines.append(("", "-" * 40 + "\n"))
+                lines.append(("", "  • Status: "))
+                lines.append((status_color, status_text))
+                lines.append(("", "\n"))
+                lines.append(("", f"  • Execution Time: {exec_time:.1f}s\n"))
+                if token_usage is not None:
+                    lines.append(("", f"  • Tokens Used: {token_usage}\n"))
+                ts = info.get("timestamp")
+                if ts:
+                    lines.append(("", f"  • Completed At: {ts}\n"))
+                lines.append(("", "\n"))
+
+                # --- What NightShift did (file changes) ---
+                fc = info.get("file_changes") or {}
+                created = fc.get("created") or []
+                modified = fc.get("modified") or []
+                deleted = fc.get("deleted") or []
+
+                if any((created, modified, deleted)):
+                    lines.append(("class:section-title", "🛠️ What NightShift did\n"))
+                    lines.append(("", "-" * 40 + "\n"))
+
+                    # Created
+                    if created:
+                        total = len(created)
+                        lines.append(("class:file-created", f"✨ Created {total} file(s):\n"))
+                        for path in created[:5]:
+                            lines.append(("", f"   • {path}\n"))
+                        if total > 5:
+                            remaining = total - 5
+                            lines.append(("class:dim", f"   ... and {remaining} more\n"))
+
+                    # Modified
+                    if modified:
+                        total = len(modified)
+                        lines.append(("class:file-modified", f"\n✏️ Modified {total} file(s):\n"))
+                        for path in modified[:5]:
+                            lines.append(("", f"   • {path}\n"))
+                        if total > 5:
+                            remaining = total - 5
+                            lines.append(("class:dim", f"   ... and {remaining} more\n"))
+
+                    # Deleted
+                    if deleted:
+                        total = len(deleted)
+                        lines.append(("class:file-deleted", f"\n🗑️ Deleted {total} file(s):\n"))
+                        for path in deleted[:5]:
+                            lines.append(("", f"   • {path}\n"))
+                        if total > 5:
+                            remaining = total - 5
+                            lines.append(("class:dim", f"   ... and {remaining} more\n"))
+
+                    lines.append(("", "\n"))
+
+                # --- Error block (code-block style) ---
+                if raw_status != "success" and info.get("error_message"):
+                    err = info["error_message"]
+                    err = _truncate(err, 300)
+                    lines.append(("class:section-title", "❌ Error Details\n"))
+                    lines.append(("", "-" * 40 + "\n"))
+                    # fake "code block"
+                    lines.append(("class:error-codeblock", "┌─ error ───────────────────────────────\n"))
+                    for line in err.splitlines() or ["(no details)"]:
+                        lines.append(("class:error-codeblock", f"│ {line}\n"))
+                    lines.append(("class:error-codeblock", "└───────────────────────────────────────\n\n"))
+
+                # --- Result path / full results hint ---
                 if info.get("result_path"):
-                    lines.append(("", f"Results: {info['result_path']}\n"))
-
-                # Error message
-                if info.get("error_message"):
-                    lines.append(("", f"\nError:\n"))
-                    lines.append(("red", f"{info['error_message']}\n"))
-
-                # File changes
-                fc = info.get("file_changes", {})
-                if any(fc.get(k) for k in ("created", "modified", "deleted")):
-                    lines.append(("", f"\nFile Changes:\n"))
-                    for label, key, color in [
-                        ("Created", "created", "green"),
-                        ("Modified", "modified", "yellow"),
-                        ("Deleted", "deleted", "red"),
-                    ]:
-                        files = fc.get(key) or []
-                        if files:
-                            lines.append((color, f"{label} ({len(files)}):\n"))
-                            for fpath in files[:5]:
-                                lines.append(("", f"  • {fpath}\n"))
-                            if len(files) > 5:
-                                lines.append(("class:dim", f"  ... and {len(files) - 5} more\n"))
+                    lines.append(("class:dim", f"📄 Full results: {info['result_path']}\n"))
 
         return lines
 
