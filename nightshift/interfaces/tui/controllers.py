@@ -695,11 +695,7 @@ class TUIController:
 
             # Create temp file with current task details as comments
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-                # Show original description in comments
-                f.write("# ORIGINAL DESCRIPTION:\n")
-                for line in task.description.splitlines():
-                    f.write(f"# {line}\n")
-                f.write("#\n")
+                # Instructions at top
                 f.write("# Write your feedback/changes below:\n")
                 f.write("# (What do you want to change about this task?)\n")
                 f.write("#\n\n")
@@ -707,8 +703,12 @@ class TUIController:
                 # Blank area for user feedback
                 f.write("\n\n")
 
-                # Original plan details as reference
+                # Original plan details at bottom
                 f.write("# ---------- ORIGINAL PLAN (reference) ----------\n")
+                f.write("# Description:\n")
+                for line in task.description.splitlines():
+                    f.write(f"#   {line}\n")
+                f.write("#\n")
                 f.write(f"# Task ID: {task.task_id}\n")
                 f.write(f"# Status: {task.status}\n")
                 if task.allowed_tools:
