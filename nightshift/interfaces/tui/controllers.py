@@ -117,12 +117,29 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                 elif btype == "tool_use":
                     name = block.get("name") or "<tool>"
                     args = block.get("input") or {}
-                    # For Bash, show the command; for other tools, show full args
+
+                    # Special handling for different tools
                     if name == "Bash" and "command" in args:
                         cmd = args["command"]
                         lines_out.append(f"🔧 {name}: {cmd}")
+                    elif name == "Write" and "file_path" in args:
+                        path = args["file_path"]
+                        content = args.get("content", "")
+                        lines_out.append(f"🔧 {name}: {path} ({len(content)} chars)")
+                    elif name == "Edit" and "file_path" in args:
+                        path = args["file_path"]
+                        lines_out.append(f"🔧 {name}: {path}")
+                    elif name == "Read" and "file_path" in args:
+                        path = args["file_path"]
+                        lines_out.append(f"🔧 {name}: {path}")
+                    elif name == "Glob" and "pattern" in args:
+                        pattern = args["pattern"]
+                        lines_out.append(f"🔧 {name}: {pattern}")
                     else:
+                        # For other tools, show compact representation
                         args_preview = repr(args)
+                        if len(args_preview) > 200:
+                            args_preview = args_preview[:197] + "..."
                         if args:
                             lines_out.append(f"🔧 {name}: {args_preview}")
                         else:
@@ -141,12 +158,29 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
         if etype == "tool_use":
             name = event.get("name") or "<tool>"
             args = event.get("input") or {}
-            # For Bash, show the command; for other tools, show full args
+
+            # Special handling for different tools
             if name == "Bash" and "command" in args:
                 cmd = args["command"]
                 lines_out.append(f"🔧 {name}: {cmd}")
+            elif name == "Write" and "file_path" in args:
+                path = args["file_path"]
+                content = args.get("content", "")
+                lines_out.append(f"🔧 {name}: {path} ({len(content)} chars)")
+            elif name == "Edit" and "file_path" in args:
+                path = args["file_path"]
+                lines_out.append(f"🔧 {name}: {path}")
+            elif name == "Read" and "file_path" in args:
+                path = args["file_path"]
+                lines_out.append(f"🔧 {name}: {path}")
+            elif name == "Glob" and "pattern" in args:
+                pattern = args["pattern"]
+                lines_out.append(f"🔧 {name}: {pattern}")
             else:
+                # For other tools, show compact representation
                 args_preview = repr(args)
+                if len(args_preview) > 200:
+                    args_preview = args_preview[:197] + "..."
                 if args:
                     lines_out.append(f"🔧 {name}: {args_preview}")
                 else:
