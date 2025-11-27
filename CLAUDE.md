@@ -8,6 +8,22 @@ NightShift is an AI-driven research automation system that uses Claude Code in h
 
 ## Development Commands
 
+### Prerequisites
+
+**Authentication Setup** (one-time):
+```bash
+# Generate OAuth token for Claude Pro authentication
+claude setup-token
+
+# Add token to ~/.zshrc or ~/.bashrc
+export CLAUDE_CODE_OAUTH_TOKEN="your-token-from-setup-token"
+
+# Reload shell
+source ~/.zshrc
+```
+
+See [docs/AUTHENTICATION_SETUP.md](docs/AUTHENTICATION_SETUP.md) for detailed setup instructions.
+
 ### Installation
 ```bash
 pip install -e .
