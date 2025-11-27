@@ -117,16 +117,12 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                 elif btype == "tool_use":
                     name = block.get("name") or "<tool>"
                     args = block.get("input") or {}
-                    # For Bash, show the command; for other tools, show compact args
+                    # For Bash, show the command; for other tools, show full args
                     if name == "Bash" and "command" in args:
                         cmd = args["command"]
-                        if len(cmd) > 100:
-                            cmd = cmd[:97] + "..."
                         lines_out.append(f"🔧 {name}: {cmd}")
                     else:
                         args_preview = repr(args)
-                        if len(args_preview) > 100:
-                            args_preview = args_preview[:97] + "..."
                         if args:
                             lines_out.append(f"🔧 {name}: {args_preview}")
                         else:
@@ -145,16 +141,12 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
         if etype == "tool_use":
             name = event.get("name") or "<tool>"
             args = event.get("input") or {}
-            # For Bash, show the command; for other tools, show compact args
+            # For Bash, show the command; for other tools, show full args
             if name == "Bash" and "command" in args:
                 cmd = args["command"]
-                if len(cmd) > 100:
-                    cmd = cmd[:97] + "..."
                 lines_out.append(f"🔧 {name}: {cmd}")
             else:
                 args_preview = repr(args)
-                if len(args_preview) > 100:
-                    args_preview = args_preview[:97] + "..."
                 if args:
                     lines_out.append(f"🔧 {name}: {args_preview}")
                 else:

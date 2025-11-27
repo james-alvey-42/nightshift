@@ -58,6 +58,7 @@ def create_app() -> Application:
         "separator": "fg:ansibrightblack",
         "dim": "fg:ansibrightblack",
         "yellow": "fg:ansiyellow",
+        "orange": "fg:ansibrightred",
         "blue": "fg:ansiblue",
         "cyan": "fg:ansicyan",
         "magenta": "fg:ansimagenta",

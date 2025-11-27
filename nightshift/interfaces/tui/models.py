@@ -66,7 +66,7 @@ def task_to_row(task) -> TaskRow:
         "CANCELLED": "🚫",
     }
     color_map = {
-        "staged": "yellow",
+        "staged": "orange",
         "committed": "blue",
         "running": "cyan",
         "paused": "magenta",

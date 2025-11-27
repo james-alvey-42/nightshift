@@ -74,7 +74,7 @@ class DetailControl(FormattedTextControl):
                 "CANCELLED": "🚫",
             }
             status_colors = {
-                "STAGED": "yellow",
+                "STAGED": "orange",
                 "COMMITTED": "blue",
                 "RUNNING": "cyan",
                 "PAUSED": "magenta",
