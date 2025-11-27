@@ -27,7 +27,7 @@ class TaskListControl(FormattedTextControl):
         """Generate formatted text for task list"""
         lines = []
         for i, row in enumerate(self.state.tasks):
-            selected = (i == self.selected_index)
+            selected = (i == self.state.selected_index)
             style = f"reverse {row.status_color}" if selected else row.status_color
             desc = row.description
             if len(desc) > 49:
