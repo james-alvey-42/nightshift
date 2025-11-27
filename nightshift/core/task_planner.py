@@ -151,10 +151,13 @@ Guidelines:
             env = dict(os.environ)
             if 'ANTHROPIC_API_KEY' in env:
                 del env['ANTHROPIC_API_KEY']
+                self.logger.info("[TaskPlanner] Removed ANTHROPIC_API_KEY from subprocess environment")
 
             # Verify OAuth token is present
-            if 'CLAUDE_CODE_OAUTH_TOKEN' not in env:
-                self.logger.warning("CLAUDE_CODE_OAUTH_TOKEN not found. Run 'claude setup-token' and add to shell profile.")
+            if 'CLAUDE_CODE_OAUTH_TOKEN' in env:
+                self.logger.info("[TaskPlanner] Using CLAUDE_CODE_OAUTH_TOKEN for Claude Pro authentication")
+            else:
+                self.logger.warning("[TaskPlanner] CLAUDE_CODE_OAUTH_TOKEN not found. Run 'claude setup-token' and add to shell profile.")
 
             result = subprocess.run(
                 cmd,
@@ -312,6 +315,13 @@ Guidelines:
             env = dict(os.environ)
             if 'ANTHROPIC_API_KEY' in env:
                 del env['ANTHROPIC_API_KEY']
+                self.logger.info("[TaskPlanner/Refine] Removed ANTHROPIC_API_KEY from subprocess environment")
+
+            # Verify OAuth token is present
+            if 'CLAUDE_CODE_OAUTH_TOKEN' in env:
+                self.logger.info("[TaskPlanner/Refine] Using CLAUDE_CODE_OAUTH_TOKEN for Claude Pro authentication")
+            else:
+                self.logger.warning("[TaskPlanner/Refine] CLAUDE_CODE_OAUTH_TOKEN not found. Run 'claude setup-token' and add to shell profile.")
 
             result = subprocess.run(
                 cmd,
