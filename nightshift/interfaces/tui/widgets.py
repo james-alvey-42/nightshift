@@ -332,7 +332,7 @@ class StatusBarControl(FormattedTextControl):
         """Generate formatted text for status bar"""
         mode = "COMMAND" if self.state.command_active else "NORMAL"
         msg = self.state.busy_label or self.state.message or ""
-        hints = "j/k:nav h/l:tabs 1-4:tab a/r/p/P/X/s:task q:quit R:refresh :help"
+        hints = "j/k:nav h/l:tabs 1-4:tab a:approve r:reject p:pause P:resume X:kill s:submit q:quit R:refresh :help"
 
         if msg and ("failed" in msg.lower() or "error" in msg.lower()):
             text = f" {mode} | {msg[:120]}"
