@@ -55,6 +55,23 @@ class DetailControl(FormattedTextControl):
 
         lines = []
 
+        # Tab bar
+        tab_names = [
+            ("1", "Overview"),
+            ("2", "Exec"),
+            ("3", "Files"),
+            ("4", "Summary")
+        ]
+        tab_values = ["overview", "exec", "files", "summary"]
+
+        for i, (key, name) in enumerate(tab_names):
+            is_active = tab_values[i] == tab
+            if is_active:
+                lines.append(("reverse", f" {key}:{name} "))
+            else:
+                lines.append(("class:dim", f" {key}:{name} "))
+        lines.append(("", "\n\n"))
+
         if tab == "overview":
             lines.append(("bold", f"Task: {st.task_id}\n\n"))
 
@@ -315,7 +332,7 @@ class StatusBarControl(FormattedTextControl):
         """Generate formatted text for status bar"""
         mode = "COMMAND" if self.state.command_active else "NORMAL"
         msg = self.state.busy_label or self.state.message or ""
-        hints = "j/k:nav 1-4:tabs a/r/p/P/X/s:task q:quit R:refresh :help"
+        hints = "j/k:nav h/l:tabs 1-4:tab a/r/p/P/X/s:task q:quit R:refresh :help"
 
         if msg and ("failed" in msg.lower() or "error" in msg.lower()):
             text = f" {mode} | {msg[:120]}"

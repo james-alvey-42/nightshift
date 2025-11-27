@@ -73,15 +73,15 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
         """Switch to summary tab"""
         state.detail_tab = "summary"
 
-    # H/L for prev/next tab
-    @kb.add('H', filter=is_normal_mode)
+    # h/l for prev/next tab
+    @kb.add('h', filter=is_normal_mode)
     def _(event):
         """Previous tab"""
         tabs = ["overview", "exec", "files", "summary"]
         current_idx = tabs.index(state.detail_tab)
         state.detail_tab = tabs[(current_idx - 1) % len(tabs)]
 
-    @kb.add('L', filter=is_normal_mode)
+    @kb.add('l', filter=is_normal_mode)
     def _(event):
         """Next tab"""
         tabs = ["overview", "exec", "files", "summary"]
