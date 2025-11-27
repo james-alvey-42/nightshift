@@ -218,7 +218,8 @@ class DetailControl(FormattedTextControl):
                 else:
                     status_text, status_emoji, status_color = raw_status.upper() or "UNKNOWN", "❓", ""
 
-                header = f"{status_emoji} Task {status_text}: {info.get('task_id', st.task_id or '')}\n\n"
+                task_id = info.get('task_id', st.task_id)
+                header = f"{status_emoji} Task {status_text}: {task_id}\n\n"
                 lines.append((status_color, header))
 
                 # --- What you asked for ---
