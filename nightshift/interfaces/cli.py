@@ -5,6 +5,7 @@ Provides commands for task submission, approval, and monitoring
 import click
 import uuid
 import os
+import sys
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -23,6 +24,93 @@ from ..core.task_executor import ExecutorManager
 
 # Initialize rich console for pretty output
 console = Console()
+
+
+# Shell completion functions
+def complete_task_id(ctx, args, incomplete):
+    """
+    Provide task ID completion from the database.
+    Returns task IDs that start with the incomplete string.
+    """
+    try:
+        # Initialize config and task queue
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get all tasks
+        tasks = task_queue.list_tasks()
+
+        # Filter task IDs that start with the incomplete string
+        task_ids = [task.task_id for task in tasks if task.task_id.startswith(incomplete)]
+
+        return task_ids
+    except Exception:
+        # Return empty list if there's an error
+        return []
+
+
+def complete_staged_task_id(ctx, args, incomplete):
+    """
+    Provide task ID completion for staged tasks only.
+    Used by the approve command.
+    """
+    try:
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get only staged tasks
+        tasks = task_queue.list_tasks(TaskStatus.STAGED)
+
+        # Filter task IDs that start with the incomplete string
+        task_ids = [task.task_id for task in tasks if task.task_id.startswith(incomplete)]
+
+        return task_ids
+    except Exception:
+        return []
+
+
+def complete_cancellable_task_id(ctx, args, incomplete):
+    """
+    Provide task ID completion for cancellable tasks (staged or committed).
+    Used by the cancel command.
+    """
+    try:
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get staged and committed tasks
+        staged = task_queue.list_tasks(TaskStatus.STAGED)
+        committed = task_queue.list_tasks(TaskStatus.COMMITTED)
+
+        # Combine and filter
+        all_tasks = staged + committed
+        task_ids = [task.task_id for task in all_tasks if task.task_id.startswith(incomplete)]
+
+        return task_ids
+    except Exception:
+        return []
+
+
+def complete_running_task_id(ctx, args, incomplete):
+    """
+    Provide task ID completion for running or paused tasks.
+    Used by kill, pause, resume commands.
+    """
+    try:
+        config = Config()
+        task_queue = TaskQueue(db_path=str(config.get_database_path()))
+
+        # Get running and paused tasks
+        running = task_queue.list_tasks(TaskStatus.RUNNING)
+        paused = task_queue.list_tasks(TaskStatus.PAUSED)
+
+        # Combine and filter
+        all_tasks = running + paused
+        task_ids = [task.task_id for task in all_tasks if task.task_id.startswith(incomplete)]
+
+        return task_ids
+    except Exception:
+        return []
 
 
 @click.group()
@@ -252,7 +340,7 @@ def queue(ctx, status):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_staged_task_id)
 @click.option('--sync', is_flag=True, help='Execute synchronously (wait for completion)')
 @click.pass_context
 def approve(ctx, task_id, sync):
@@ -304,7 +392,7 @@ def approve(ctx, task_id, sync):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_task_id)
 @click.option('--show-output', is_flag=True, help='Display full output')
 @click.pass_context
 def results(ctx, task_id, show_output):
@@ -349,7 +437,7 @@ def results(ctx, task_id, show_output):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_staged_task_id)
 @click.argument('feedback')
 @click.option('--timeout', type=int, help='Override task execution timeout in seconds')
 @click.pass_context
@@ -438,7 +526,7 @@ def revise(ctx, task_id, feedback, timeout):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_task_id)
 @click.pass_context
 def display(ctx, task_id):
     """Display task execution output in human-readable format"""
@@ -464,7 +552,7 @@ def display(ctx, task_id):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_cancellable_task_id)
 @click.pass_context
 def cancel(ctx, task_id):
     """Cancel a staged task"""
@@ -484,7 +572,7 @@ def cancel(ctx, task_id):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_running_task_id)
 @click.pass_context
 def pause(ctx, task_id):
     """Pause a running task"""
@@ -502,7 +590,7 @@ def pause(ctx, task_id):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_running_task_id)
 @click.pass_context
 def resume(ctx, task_id):
     """Resume a paused task"""
@@ -520,7 +608,7 @@ def resume(ctx, task_id):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_running_task_id)
 @click.pass_context
 def kill(ctx, task_id):
     """Kill a running or paused task"""
@@ -538,7 +626,7 @@ def kill(ctx, task_id):
 
 
 @cli.command()
-@click.argument('task_id')
+@click.argument('task_id', shell_complete=complete_task_id)
 @click.option('--follow', '-f', is_flag=True, help='Follow output in real-time (not yet implemented)')
 @click.pass_context
 def watch(ctx, task_id, follow):
@@ -840,6 +928,105 @@ def clear(ctx, confirm):
         console.print(f"\n[bold green]✓ Cleared all NightShift data[/bold green]\n")
     else:
         console.print(f"\n[dim]Nothing to clear[/dim]\n")
+
+
+@cli.command()
+@click.option('--shell', type=click.Choice(['bash', 'zsh', 'fish', 'powershell'], case_sensitive=False),
+              help='Shell type (auto-detected if not specified)')
+@click.option('--install', is_flag=True, help='Automatically add completion to shell config file')
+@click.pass_context
+def completion(ctx, shell, install):
+    """
+    Setup shell completion for nightshift commands.
+
+    This will generate the appropriate completion script for your shell.
+    Use --install to automatically add it to your shell configuration file.
+    """
+    import subprocess
+
+    # Auto-detect shell if not specified
+    if not shell:
+        shell_path = os.environ.get('SHELL', '')
+        if 'bash' in shell_path:
+            shell = 'bash'
+        elif 'zsh' in shell_path:
+            shell = 'zsh'
+        elif 'fish' in shell_path:
+            shell = 'fish'
+        else:
+            console.print("\n[red]Could not auto-detect shell. Please specify with --shell[/red]")
+            console.print("Available shells: bash, zsh, fish, powershell\n")
+            raise click.Abort()
+
+    shell = shell.lower()
+
+    console.print(f"\n[bold blue]Setting up {shell} completion for nightshift[/bold blue]\n")
+
+    # Determine completion environment variable and shell config file
+    shell_configs = {
+        'bash': {
+            'env_var': 'bash_source',
+            'rc_file': '~/.bashrc',
+            'eval_cmd': 'eval "$(_NIGHTSHIFT_COMPLETE=bash_source nightshift)"'
+        },
+        'zsh': {
+            'env_var': 'zsh_source',
+            'rc_file': '~/.zshrc',
+            'eval_cmd': 'eval "$(_NIGHTSHIFT_COMPLETE=zsh_source nightshift)"'
+        },
+        'fish': {
+            'env_var': 'fish_source',
+            'rc_file': '~/.config/fish/config.fish',
+            'eval_cmd': '_NIGHTSHIFT_COMPLETE=fish_source nightshift | source'
+        },
+        'powershell': {
+            'env_var': 'powershell_source',
+            'rc_file': '$PROFILE',
+            'eval_cmd': '& nightshift completion powershell | Out-String | Invoke-Expression'
+        }
+    }
+
+    config = shell_configs[shell]
+
+    if install:
+        # Install completion to shell config
+        rc_file = os.path.expanduser(config['rc_file'])
+        eval_cmd = config['eval_cmd']
+
+        # Check if already installed
+        if os.path.exists(rc_file):
+            with open(rc_file, 'r') as f:
+                content = f.read()
+                if '_NIGHTSHIFT_COMPLETE' in content or 'nightshift completion' in content:
+                    console.print(f"[yellow]⚠ Completion already installed in {config['rc_file']}[/yellow]\n")
+                    return
+
+        # Add to shell config
+        try:
+            # Ensure parent directory exists (for fish)
+            os.makedirs(os.path.dirname(rc_file), exist_ok=True)
+
+            with open(rc_file, 'a') as f:
+                f.write(f"\n# NightShift shell completion\n")
+                f.write(f"{eval_cmd}\n")
+
+            console.print(f"[green]✓ Completion installed to {config['rc_file']}[/green]")
+            console.print(f"\n[dim]To activate completion in your current shell:[/dim]")
+            console.print(f"  source {config['rc_file']}")
+            console.print()
+        except Exception as e:
+            console.print(f"\n[red]✗ Failed to install completion: {e}[/red]")
+            console.print(f"\n[dim]You can manually add this line to {config['rc_file']}:[/dim]")
+            console.print(f"  {eval_cmd}")
+            console.print()
+    else:
+        # Just show instructions
+        console.print(f"[yellow]To enable completion for {shell}, add this to {config['rc_file']}:[/yellow]\n")
+        console.print(f"  {config['eval_cmd']}\n")
+        console.print(f"[dim]Or run:[/dim]")
+        console.print(f"  nightshift completion --shell {shell} --install\n")
+        console.print(f"[dim]Then reload your shell:[/dim]")
+        console.print(f"  source {config['rc_file']}\n")
 
 
 # Executor command group
