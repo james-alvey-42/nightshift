@@ -55,32 +55,32 @@ def create_app() -> Application:
     # Define style
     style = Style.from_dict({
         "statusbar": "reverse",
-        "separator": "fg:#444444",
-        "dim": "fg:#666666",
-        "yellow": "fg:ansiyellow",
-        "blue": "fg:ansiblue",
-        "cyan": "fg:ansicyan",
-        "magenta": "fg:ansimagenta",
-        "green": "fg:ansigreen",
-        "red": "fg:ansired",
-        "ansired": "fg:ansired",
+        "separator": "",
+        "dim": "",
+        "yellow": "",
+        "blue": "",
+        "cyan": "",
+        "magenta": "",
+        "green": "",
+        "red": "",
+        "ansired": "",
 
         # New detail panel helpers
         "heading": "bold underline",
-        "section-title": "bold fg:ansicyan",
-        "success": "fg:ansigreen bold",
-        "error": "fg:ansired bold",
+        "section-title": "bold",
+        "success": "bold",
+        "error": "bold",
 
         # File change styles
-        "file-created-title": "bold fg:ansigreen",
-        "file-modified-title": "bold fg:ansiyellow",
-        "file-deleted-title": "bold fg:ansired",
-        "file-created": "fg:ansigreen",
-        "file-modified": "fg:ansiyellow",
-        "file-deleted": "fg:ansired",
+        "file-created-title": "bold",
+        "file-modified-title": "bold",
+        "file-deleted-title": "bold",
+        "file-created": "",
+        "file-modified": "",
+        "file-deleted": "",
 
         # Error codeblock style
-        "error-codeblock": "fg:ansired bg:#330000",
+        "error-codeblock": "",
     })
 
     # Create application
