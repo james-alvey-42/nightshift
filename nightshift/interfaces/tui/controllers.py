@@ -115,11 +115,23 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                         lines_out.append("Claude:")
                         for ln in text.splitlines():
                             lines_out.append(f"  {ln}")
-                        lines_out.append("")  # blank line
                 elif btype == "tool_use":
                     name = block.get("name") or "<tool>"
-                    lines_out.append(f"🔧 Tool call: {name}")
-                    lines_out.append("")
+                    args = block.get("input") or {}
+                    # For Bash, show the command; for other tools, show compact args
+                    if name == "Bash" and "command" in args:
+                        cmd = args["command"]
+                        if len(cmd) > 100:
+                            cmd = cmd[:97] + "..."
+                        lines_out.append(f"🔧 {name}: {cmd}")
+                    else:
+                        args_preview = repr(args)
+                        if len(args_preview) > 100:
+                            args_preview = args_preview[:97] + "..."
+                        if args:
+                            lines_out.append(f"🔧 {name}: {args_preview}")
+                        else:
+                            lines_out.append(f"🔧 {name}")
             continue
 
         # Direct text events
@@ -133,17 +145,21 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
         # Tool use events
         if etype == "tool_use":
             name = event.get("name") or "<tool>"
-            lines_out.append(f"🔧 Tool call: {name}")
-            tool_id = event.get("id") or event.get("tool_use_id")
-            if tool_id:
-                lines_out.append(f"  id: {tool_id}")
             args = event.get("input") or {}
-            if args:
+            # For Bash, show the command; for other tools, show compact args
+            if name == "Bash" and "command" in args:
+                cmd = args["command"]
+                if len(cmd) > 100:
+                    cmd = cmd[:97] + "..."
+                lines_out.append(f"🔧 {name}: {cmd}")
+            else:
                 args_preview = repr(args)
-                if len(args_preview) > 200:
-                    args_preview = args_preview[:197] + "..."
-                lines_out.append(f"  args: {args_preview}")
-            lines_out.append("")
+                if len(args_preview) > 100:
+                    args_preview = args_preview[:97] + "..."
+                if args:
+                    lines_out.append(f"🔧 {name}: {args_preview}")
+                else:
+                    lines_out.append(f"🔧 {name}")
             continue
 
         # Final result event
@@ -153,7 +169,6 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                 lines_out.append("✅ Execution completed successfully.")
             elif subtype:
                 lines_out.append(f"Result: {subtype}")
-            lines_out.append("")
             continue
 
     if not lines_out:

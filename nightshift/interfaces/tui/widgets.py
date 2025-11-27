@@ -140,9 +140,21 @@ class DetailControl(FormattedTextControl):
                 lines.append(("class:dim", f"{snippet}\n"))
 
         elif tab == "exec":
-            lines.append(("bold", "Execution Log\n\n"))
+            lines.append(("class:heading", "📋 Execution Log\n\n"))
             if st.exec_snippet:
-                lines.append(("", st.exec_snippet + "\n"))
+                # Parse and colorize execution log
+                for line in st.exec_snippet.split("\n"):
+                    if line.startswith("Claude:"):
+                        lines.append(("cyan bold", line + "\n"))
+                    elif line.startswith("🔧"):
+                        lines.append(("yellow", line + "\n"))
+                    elif line.startswith("✅"):
+                        lines.append(("green", line + "\n"))
+                    elif line.startswith("  "):
+                        # Indented text under Claude:
+                        lines.append(("class:dim", line + "\n"))
+                    else:
+                        lines.append(("", line + "\n"))
             else:
                 lines.append(("class:dim", "No execution log available\n"))
 
