@@ -112,9 +112,8 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                 if btype == "text":
                     text = block.get("text") or ""
                     if text:
-                        lines_out.append("Claude:")
                         for ln in text.splitlines():
-                            lines_out.append(f"  {ln}")
+                            lines_out.append(ln)
                 elif btype == "tool_use":
                     name = block.get("name") or "<tool>"
                     args = block.get("input") or {}
