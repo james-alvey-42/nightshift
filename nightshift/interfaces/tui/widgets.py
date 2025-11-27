@@ -30,8 +30,8 @@ class TaskListControl(FormattedTextControl):
             selected = (i == self.state.selected_index)
             style = f"reverse {row.status_color}" if selected else row.status_color
             desc = row.description
-            if len(desc) > 50:
-                desc = desc[:47] + "..."
+            if len(desc) > 40:
+                desc = desc[:37] + "..."
             created = row.created_at.split("T")[0] if row.created_at else ""
             text = f" {row.status_emoji} {row.task_id} {desc} [{created}]"
             lines.append((style, text + "\n"))
