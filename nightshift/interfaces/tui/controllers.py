@@ -23,26 +23,16 @@ def extract_claude_text_from_result(result_path: str) -> str:
     """
     Parse stream-json 'stdout' from result_path and extract Claude's text
     (content_block_delta events of type 'text_delta') into a single string.
-    This mirrors SlackFormatter.format_completion_notification behavior.
     """
-    if not result_path:
-        return ""
-
-    p = Path(result_path)
-    if not p.exists():
-        return ""
-
     try:
-        with p.open("r") as f:
+        with Path(result_path).open("r") as f:
             data = json.load(f)
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError):
         return ""
 
     stdout = data.get("stdout", "")
-    if not stdout:
-        return ""
-
     text_blocks = []
+
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
@@ -57,36 +47,26 @@ def extract_claude_text_from_result(result_path: str) -> str:
             if delta.get("type") == "text_delta":
                 text_blocks.append(delta.get("text", ""))
 
-    return "".join(text_blocks).strip()
+    return "".join(text_blocks)
 
 
 def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
     """
     Parse stream-json 'stdout' and render a human-readable execution log.
 
-    Matches NightShift's actual event structure (same as CLI watch and Slack):
+    Matches NightShift's actual event structure:
       - type == 'assistant' with message.content blocks
       - type == 'text'
       - type == 'tool_use'
       - type == 'result'
     """
-    if not result_path:
-        return ""
-
-    p = Path(result_path)
-    if not p.exists():
-        return ""
-
     try:
-        with p.open("r") as f:
+        with Path(result_path).open("r") as f:
             data = json.load(f)
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError):
         return ""
 
     stdout = data.get("stdout", "")
-    if not stdout:
-        return ""
-
     lines_out = []
 
     for raw_line in stdout.splitlines():
@@ -178,16 +158,13 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                 lines_out.append(f"Result: {subtype}")
             continue
 
-    if not lines_out:
-        return ""
-
-    # Clip to max_lines for safety
+    # Clip to max_lines
     if len(lines_out) > max_lines:
         remainder = len(lines_out) - max_lines
         lines_out = lines_out[:max_lines]
         lines_out.append(f"... ({remainder} more lines not shown)")
 
-    return "\n".join(lines_out).strip()
+    return "\n".join(lines_out)
 
 
 class TUIController:
@@ -212,11 +189,8 @@ class TUIController:
     # ----- internal helpers -----
 
     def _invalidate(self):
-        """Request a UI redraw (safe to call from any thread)."""
-        try:
-            get_app().invalidate()
-        except Exception:
-            pass
+        """Request a UI redraw."""
+        get_app().invalidate()
 
     def _run_in_thread(self, label: str, target, *args, **kwargs):
         """Run blocking work in a background thread with busy state."""
@@ -225,15 +199,10 @@ class TUIController:
         self._invalidate()
 
         def worker():
-            try:
-                target(*args, **kwargs)
-            finally:
-                # Clear busy state, but keep any message set by worker
-                self.state.busy = False
-                self.state.busy_label = ""
-                # Don't call refresh_tasks() from worker thread - causes race conditions
-                # The auto-refresh loop will pick up changes within 2 seconds
-                self._invalidate()
+            target(*args, **kwargs)
+            self.state.busy = False
+            self.state.busy_label = ""
+            self._invalidate()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -243,22 +212,14 @@ class TUIController:
             self.state.selected_task = SelectedTaskState()
             return
 
-        if self.state.selected_index >= len(self.state.tasks):
-            return
-
         row = self.state.tasks[self.state.selected_index]
         st = self.state.selected_task
 
         # If we've selected a different task, reload everything
         if st.task_id != row.task_id:
             task = self.queue.get_task(row.task_id)
-            if not task:
-                self.state.selected_task = SelectedTaskState()
-                return
-
             st.task_id = row.task_id
             st.details = task.to_dict()
-            # Full load: snippet + metadata
             st.exec_snippet, st.log_mtime, st.log_size = self._load_exec_snippet(task)
             st.files_info = self._load_files_info(task)
             st.summary_info = self._load_summary_info(task)
@@ -267,8 +228,6 @@ class TUIController:
 
         # Same task still selected: maybe update details and exec log
         task = self.queue.get_task(row.task_id)
-        if not task:
-            return
 
         # Always update details so status and timestamps stay current
         st.details = task.to_dict()
@@ -304,7 +263,7 @@ class TUIController:
         Returns:
             (snippet: str, mtime: float|None, size: int|None)
         """
-        result_path = getattr(task, "result_path", None)
+        result_path = task.result_path
         if not result_path:
             return "", None, None
 
@@ -314,36 +273,22 @@ class TUIController:
 
         try:
             stat = path.stat()
-            mtime = stat.st_mtime
-            size = stat.st_size
-        except OSError:
-            return "", None, None
-
-        # Read data defensively; writer may be updating the file
-        try:
             with path.open("r") as f:
                 data = json.load(f)
-        except Exception:
-            # If the file is mid-write / partially valid, skip this cycle
-            return "", mtime, size
+        except (OSError, json.JSONDecodeError):
+            return "", None, None
 
+        mtime = stat.st_mtime
+        size = stat.st_size
         stdout = data.get("stdout", "")
-        if not stdout:
-            return "", mtime, size
 
-        # First try formatted view
-        try:
-            formatted = format_exec_log_from_result(result_path, max_lines=200)
-        except Exception:
-            formatted = ""
-
+        formatted = format_exec_log_from_result(result_path, max_lines=200)
         if formatted:
             return formatted, mtime, size
 
-        # Fallback: raw tail (old behavior)
-        lines = stdout.strip().splitlines()
-        tail = lines[-40:]
-        return "\n".join(tail), mtime, size
+        # Fallback: raw tail
+        lines = stdout.splitlines()
+        return "\n".join(lines[-40:]), mtime, size
 
     def _maybe_reload_exec_snippet(
         self,
@@ -352,13 +297,8 @@ class TUIController:
         prev_size: int,
         current_snippet: str,
     ):
-        """
-        Only reload exec snippet if the log file has changed.
-
-        Returns:
-            (snippet: str, mtime: float|None, size: int|None)
-        """
-        result_path = getattr(task, "result_path", None)
+        """Only reload exec snippet if the log file has changed."""
+        result_path = task.result_path
         if not result_path:
             return current_snippet, None, None
 
@@ -366,27 +306,17 @@ class TUIController:
         if not path.exists():
             return current_snippet, None, None
 
-        try:
-            stat = path.stat()
-        except OSError:
-            return current_snippet, prev_mtime, prev_size
-
+        stat = path.stat()
         mtime = stat.st_mtime
         size = stat.st_size
 
-        # If we've seen this file before and nothing changed, keep current snippet
-        if prev_mtime is not None and prev_size is not None:
-            if mtime == prev_mtime and size == prev_size:
-                return current_snippet, prev_mtime, prev_size
+        # If nothing changed, keep current snippet
+        if prev_mtime and prev_size and mtime == prev_mtime and size == prev_size:
+            return current_snippet, prev_mtime, prev_size
 
-        # Something changed (or we never had metadata), reload
+        # Reload
         new_snippet, new_mtime, new_size = self._load_exec_snippet(task)
-
-        # If reload failed / empty snippet but file changed, keep old snippet and update metadata
-        if not new_snippet:
-            return current_snippet, mtime, size
-
-        return new_snippet, new_mtime, new_size
+        return (new_snippet or current_snippet, new_mtime or mtime, new_size or size)
 
     def _load_files_info(self, task) -> dict:
         """Load file changes info"""
@@ -397,16 +327,14 @@ class TUIController:
         try:
             with open(files_path) as f:
                 data = json.load(f)
-            created = [c["path"] for c in data.get("changes", []) if c.get("change_type") == "created"]
-            modified = [c["path"] for c in data.get("changes", []) if c.get("change_type") == "modified"]
-            deleted = [c["path"] for c in data.get("changes", []) if c.get("change_type") == "deleted"]
-            return {
-                "created": created,
-                "modified": modified,
-                "deleted": deleted,
-            }
-        except Exception:
+        except (FileNotFoundError, json.JSONDecodeError):
             return None
+
+        created = [c["path"] for c in data.get("changes", []) if c.get("change_type") == "created"]
+        modified = [c["path"] for c in data.get("changes", []) if c.get("change_type") == "modified"]
+        deleted = [c["path"] for c in data.get("changes", []) if c.get("change_type") == "deleted"]
+
+        return {"created": created, "modified": modified, "deleted": deleted}
 
     def _load_summary_info(self, task) -> dict:
         """Load summary notification"""
@@ -417,15 +345,14 @@ class TUIController:
         try:
             with open(notif_path) as f:
                 info = json.load(f)
-        except Exception:
+        except (FileNotFoundError, json.JSONDecodeError):
             return None
 
-        # Attach Claude's response text (for "What NightShift found/created")
-        result_path = info.get("result_path") or getattr(task, "result_path", None)
-        if result_path:
-            claude = extract_claude_text_from_result(result_path)
-            if claude:
-                info["claude_summary"] = claude
+        # Attach Claude's response text
+        result_path = info.get("result_path") or task.result_path
+        claude = extract_claude_text_from_result(result_path)
+        if claude:
+            info["claude_summary"] = claude
 
         return info
 
@@ -440,11 +367,9 @@ class TUIController:
 
         self.state.tasks = [task_to_row(t) for t in tasks]
 
-        # Clamp selected_index
         if self.state.selected_index >= len(self.state.tasks):
             self.state.selected_index = max(0, len(self.state.tasks) - 1)
 
-        # Reload selected task details
         self.load_selected_task_details()
 
     def execute_command(self, line: str):
@@ -459,9 +384,6 @@ class TUIController:
             parts = shlex.split(line)
         except ValueError:
             self.state.message = f"Invalid command syntax: {line}"
-            return
-
-        if not parts:
             return
 
         cmd = parts[0].lower()
@@ -516,12 +438,7 @@ class TUIController:
 
     def _cmd_status(self, args):
         """Handle :status [task_id] command"""
-        if not args:
-            self.state.message = "Usage: status <task_id>"
-            return
-
         task_id = args[0]
-        # Find task in list
         for idx, row in enumerate(self.state.tasks):
             if row.task_id == task_id:
                 self.state.selected_index = idx
@@ -618,49 +535,35 @@ class TUIController:
     # ----- Phase 3 actions: submit/approve/reject -----
 
     def submit_task(self, description: str, auto_approve: bool = False):
-        """
-        Plan and create a new task using TaskPlanner + TaskQueue.
-        Optionally auto-approve & execute.
-        """
-        description = (description or "").strip()
+        """Plan and create a new task, optionally auto-approve & execute."""
+        description = description.strip()
         if not description:
             self.state.message = "Submit: description is required"
             return
 
         def work():
-            try:
-                # Plan task
-                plan = self.planner.plan_task(description)
+            plan = self.planner.plan_task(description)
+            task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-                # Generate unique task ID
-                task_id = f"task_{uuid.uuid4().hex[:8]}"
+            task = self.queue.create_task(
+                task_id=task_id,
+                description=plan.get("enhanced_prompt", description),
+                allowed_tools=plan.get("allowed_tools", []),
+                allowed_directories=plan.get("allowed_directories", []),
+                needs_git=plan.get("needs_git", False),
+                system_prompt=plan.get("system_prompt", ""),
+                estimated_tokens=plan.get("estimated_tokens"),
+                estimated_time=plan.get("estimated_time"),
+            )
 
-                # Create task in queue
-                task = self.queue.create_task(
-                    task_id=task_id,
-                    description=plan.get("enhanced_prompt", description),
-                    allowed_tools=plan.get("allowed_tools") or [],
-                    allowed_directories=plan.get("allowed_directories") or [],
-                    needs_git=plan.get("needs_git", False),
-                    system_prompt=plan.get("system_prompt", ""),
-                    estimated_tokens=plan.get("estimated_tokens"),
-                    estimated_time=plan.get("estimated_time"),
-                )
+            self.logger.info(f"TUI: created task {task_id}")
+            self.state.message = f"Created task {task_id}"
 
-                self.logger.info(f"TUI: created task {task_id}")
-                self.state.message = f"Created task {task_id}"
-
-                if auto_approve:
-                    # Approve & execute
-                    self.queue.update_status(task_id, TaskStatus.COMMITTED)
-                    self.logger.info(f"TUI: auto-approved {task_id}")
-                    self.state.message = f"Executing {task_id}..."
-                    # Execute in this same worker thread (already background)
-                    self.agent.execute_task(task)
-
-            except Exception as e:
-                self.logger.error(f"TUI: submit task failed: {e}")
-                self.state.message = f"Submit failed: {e}"
+            if auto_approve:
+                self.queue.update_status(task_id, TaskStatus.COMMITTED)
+                self.logger.info(f"TUI: auto-approved {task_id}")
+                self.state.message = f"Executing {task_id}..."
+                self.agent.execute_task(task)
 
         label = "Planning task..." if not auto_approve else "Planning & executing..."
         self._run_in_thread(label, work)
@@ -668,131 +571,87 @@ class TUIController:
     def approve_selected_task(self):
         """Approve currently selected STAGED task and start execution."""
         if not self.state.tasks:
-            self.state.message = "No task selected"
             return
 
         row = self.state.tasks[self.state.selected_index]
         task = self.queue.get_task(row.task_id)
-        if not task:
-            self.state.message = f"Task not found: {row.task_id}"
-            return
 
         if task.status != TaskStatus.STAGED.value:
             self.state.message = "Approve: task is not STAGED"
             return
 
         def work():
-            try:
-                # Mark committed and execute
-                self.queue.update_status(task.task_id, TaskStatus.COMMITTED)
-                self.logger.info(f"TUI: approved {task.task_id}")
-                self.state.message = f"Executing {task.task_id}..."
-                # Re-fetch to ensure latest state, if needed
-                t = self.queue.get_task(task.task_id) or task
-                self.agent.execute_task(t)
-                self.state.message = f"Task {task.task_id} completed (or running)"
-            except Exception as e:
-                self.state.message = f"Approve failed: {e}"
+            self.queue.update_status(task.task_id, TaskStatus.COMMITTED)
+            self.logger.info(f"TUI: approved {task.task_id}")
+            self.state.message = f"Executing {task.task_id}..."
+            self.agent.execute_task(task)
 
         self._run_in_thread(f"Executing {task.task_id}...", work)
 
     def reject_selected_task(self):
         """Reject/cancel the selected task (STAGED or COMMITTED)."""
         if not self.state.tasks:
-            self.state.message = "No task selected"
             return
 
         row = self.state.tasks[self.state.selected_index]
         task = self.queue.get_task(row.task_id)
-        if not task:
-            self.state.message = f"Task not found: {row.task_id}"
-            return
 
         if task.status not in (TaskStatus.STAGED.value, TaskStatus.COMMITTED.value):
             self.state.message = "Reject: only STAGED/COMMITTED can be cancelled"
             return
 
-        try:
-            self.queue.update_status(task.task_id, TaskStatus.CANCELLED)
-            self.logger.info(f"TUI: cancelled {task.task_id}")
-            self.state.message = f"Cancelled {task.task_id}"
-            # Refresh immediately
-            self.refresh_tasks()
-        except Exception as e:
-            self.logger.error(f"TUI: cancel {task.task_id} failed: {e}")
-            self.state.message = f"Reject failed: {e}"
+        self.queue.update_status(task.task_id, TaskStatus.CANCELLED)
+        self.logger.info(f"TUI: cancelled {task.task_id}")
+        self.state.message = f"Cancelled {task.task_id}"
+        self.refresh_tasks()
 
     def pause_selected_task(self):
         """Pause the currently selected RUNNING task."""
         if not self.state.tasks:
-            self.state.message = "No task selected"
             return
 
         row = self.state.tasks[self.state.selected_index]
         task = self.queue.get_task(row.task_id)
-        if not task:
-            self.state.message = f"Task not found: {row.task_id}"
-            return
 
         if task.status != TaskStatus.RUNNING.value:
             self.state.message = "Pause: only RUNNING tasks can be paused"
             return
 
-        try:
-            self.agent.pause_task(task.task_id)
-            self.logger.info(f"TUI: paused {task.task_id}")
-            self.state.message = f"Paused {task.task_id}"
-            self.refresh_tasks()
-        except Exception as e:
-            self.logger.error(f"TUI: pause {task.task_id} failed: {e}")
-            self.state.message = f"Pause failed: {e}"
+        self.agent.pause_task(task.task_id)
+        self.logger.info(f"TUI: paused {task.task_id}")
+        self.state.message = f"Paused {task.task_id}"
+        self.refresh_tasks()
 
     def resume_selected_task(self):
         """Resume the currently selected PAUSED task."""
         if not self.state.tasks:
-            self.state.message = "No task selected"
             return
 
         row = self.state.tasks[self.state.selected_index]
         task = self.queue.get_task(row.task_id)
-        if not task:
-            self.state.message = f"Task not found: {row.task_id}"
-            return
 
         if task.status != TaskStatus.PAUSED.value:
             self.state.message = "Resume: only PAUSED tasks can be resumed"
             return
 
-        try:
-            self.agent.resume_task(task.task_id)
-            self.logger.info(f"TUI: resumed {task.task_id}")
-            self.state.message = f"Resumed {task.task_id}"
-            self.refresh_tasks()
-        except Exception as e:
-            self.logger.error(f"TUI: resume {task.task_id} failed: {e}")
-            self.state.message = f"Resume failed: {e}"
+        self.agent.resume_task(task.task_id)
+        self.logger.info(f"TUI: resumed {task.task_id}")
+        self.state.message = f"Resumed {task.task_id}"
+        self.refresh_tasks()
 
     def kill_selected_task(self):
         """Kill the currently selected RUNNING or PAUSED task."""
         if not self.state.tasks:
-            self.state.message = "No task selected"
             return
 
         row = self.state.tasks[self.state.selected_index]
         task = self.queue.get_task(row.task_id)
-        if not task:
-            self.state.message = f"Task not found: {row.task_id}"
-            return
 
         if task.status not in (TaskStatus.RUNNING.value, TaskStatus.PAUSED.value):
             self.state.message = "Kill: only RUNNING/PAUSED tasks can be killed"
             return
 
-        try:
-            self.agent.kill_task(task.task_id)
-            self.logger.info(f"TUI: killed {task.task_id}")
-            self.state.message = f"Killed {task.task_id}"
-            self.refresh_tasks()
-        except Exception as e:
-            self.logger.error(f"TUI: kill {task.task_id} failed: {e}")
-            self.state.message = f"Kill failed: {e}"
+        self.agent.kill_task(task.task_id)
+        self.logger.info(f"TUI: killed {task.task_id}")
+        self.state.message = f"Killed {task.task_id}"
+        self.refresh_tasks()

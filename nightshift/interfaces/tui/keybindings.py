@@ -43,16 +43,14 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
     @kb.add('g', filter=is_normal_mode)
     def _(event):
         """Jump to first task"""
-        if state.tasks:
-            state.selected_index = 0
-            controller.load_selected_task_details()
+        state.selected_index = 0
+        controller.load_selected_task_details()
 
     @kb.add('G', filter=is_normal_mode)
     def _(event):
         """Jump to last task"""
-        if state.tasks:
-            state.selected_index = len(state.tasks) - 1
-            controller.load_selected_task_details()
+        state.selected_index = len(state.tasks) - 1
+        controller.load_selected_task_details()
 
     # Tab switching: 1-4 for direct tab access
     @kb.add('1', filter=is_normal_mode)
@@ -101,11 +99,8 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
     @kb.add('c-l', filter=is_normal_mode)
     def _(event):
         """Hard refresh from backend"""
-        try:
-            controller.refresh_tasks()
-            state.message = "Refreshed"
-        except Exception as e:
-            state.message = f"Refresh failed: {e}"
+        controller.refresh_tasks()
+        state.message = "Refreshed"
         get_app().invalidate()
 
     # Phase 3: Task actions
@@ -160,27 +155,24 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
                 f.write("# Save and quit (:wq) to submit, or quit without saving (:q!) to cancel\n")
                 temp_path = f.name
 
-            try:
-                # Open editor (respects $EDITOR, defaults to vim)
-                editor = os.environ.get('EDITOR', 'vim')
-                result = subprocess.run([editor, temp_path], check=False)
+            # Open editor (respects $EDITOR, defaults to vim)
+            editor = os.environ.get('EDITOR', 'vim')
+            subprocess.run([editor, temp_path], check=False)
 
-                # Read the content
-                with open(temp_path, 'r') as f:
-                    lines = f.readlines()
+            # Read the content
+            with open(temp_path, 'r') as f:
+                lines = f.readlines()
 
-                # Filter out comments and empty lines
-                desc_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
-                desc = ''.join(desc_lines).strip()
+            # Filter out comments and empty lines
+            desc_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
+            desc = ''.join(desc_lines).strip()
 
-                if desc:
-                    controller.submit_task(desc, auto_approve=False)
-                else:
-                    state.message = "Submit cancelled: empty description"
+            Path(temp_path).unlink()
 
-            finally:
-                # Clean up temp file
-                Path(temp_path).unlink(missing_ok=True)
+            if desc:
+                controller.submit_task(desc, auto_approve=False)
+            else:
+                state.message = "Submit cancelled: empty description"
 
             get_app().invalidate()
 
