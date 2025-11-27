@@ -60,6 +60,110 @@ def extract_claude_text_from_result(result_path: str) -> str:
     return "".join(text_blocks).strip()
 
 
+def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
+    """
+    Parse stream-json 'stdout' and render a human-readable execution log.
+
+    Shows Claude's text, tool calls, and tool outputs in a readable format.
+    """
+    if not result_path:
+        return ""
+
+    p = Path(result_path)
+    if not p.exists():
+        return ""
+
+    try:
+        with p.open("r") as f:
+            data = json.load(f)
+    except Exception:
+        return ""
+
+    stdout = data.get("stdout", "")
+    if not stdout:
+        return ""
+
+    lines_out = []
+    current_assistant_buffer = []
+
+    def flush_assistant():
+        if current_assistant_buffer:
+            text = "".join(current_assistant_buffer).strip()
+            if text:
+                lines_out.append("Claude:")
+                for ln in text.splitlines():
+                    lines_out.append(f"  {ln}")
+                lines_out.append("")  # blank line
+            current_assistant_buffer.clear()
+
+    for raw_line in stdout.splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+
+        try:
+            event = json.loads(raw_line)
+        except json.JSONDecodeError:
+            # Fallback: raw text line
+            if raw_line:
+                current_assistant_buffer.append(raw_line + "\n")
+            continue
+
+        etype = event.get("type")
+
+        # Claude text deltas
+        if etype == "content_block_delta":
+            delta = event.get("delta", {})
+            if delta.get("type") == "text_delta":
+                current_assistant_buffer.append(delta.get("text", ""))
+            continue
+
+        # Tool use start (content_block_start with tool_use)
+        if etype == "content_block_start":
+            content = event.get("content_block", {})
+            if content.get("type") == "tool_use":
+                flush_assistant()
+                name = content.get("name") or "<unknown tool>"
+                tool_id = content.get("id")
+                lines_out.append(f"🔧 Tool call: {name}")
+                if tool_id:
+                    lines_out.append(f"  id: {tool_id}")
+                # Args might come in input_json_delta events, skip for now
+                lines_out.append("")
+            continue
+
+        # Standalone tool_use event (alternative format)
+        if etype == "tool_use":
+            flush_assistant()
+            name = event.get("name") or "<unknown tool>"
+            tool_id = event.get("id") or event.get("tool_use_id")
+            args = event.get("input") or {}
+            args_preview = repr(args)
+            if len(args_preview) > 200:
+                args_preview = args_preview[:197] + "..."
+            lines_out.append(f"🔧 Tool call: {name}")
+            if args:
+                lines_out.append(f"  args: {args_preview}")
+            if tool_id:
+                lines_out.append(f"  id: {tool_id}")
+            lines_out.append("")
+            continue
+
+    # Flush any remaining assistant text
+    flush_assistant()
+
+    if not lines_out:
+        return ""
+
+    # Clip to max_lines for safety
+    if len(lines_out) > max_lines:
+        remainder = len(lines_out) - max_lines
+        lines_out = lines_out[:max_lines]
+        lines_out.append(f"... ({remainder} more lines not shown)")
+
+    return "\n".join(lines_out).strip()
+
+
 class TUIController:
     """Controller for TUI operations"""
 
@@ -131,24 +235,9 @@ class TUIController:
                 st.last_loaded = datetime.utcnow()
 
     def _load_exec_snippet(self, task) -> str:
-        """Load execution log snippet"""
-        if not task.result_path:
-            return ""
-
-        path = Path(task.result_path)
-        if not path.exists():
-            return ""
-
+        """Load formatted execution log snippet for the task."""
         try:
-            with open(path) as f:
-                data = json.load(f)
-            stdout = data.get("stdout", "")
-            if not stdout:
-                return ""
-            # Take last 40 lines
-            lines = stdout.strip().split("\n")
-            tail = lines[-40:]
-            return "\n".join(tail)
+            return format_exec_log_from_result(task.result_path, max_lines=200)
         except Exception:
             return ""
 
