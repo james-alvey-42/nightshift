@@ -113,3 +113,96 @@ def create_app() -> Application:
     )
 
     return app
+
+
+def create_app_for_test(tasks=None, tmp_path=None, disable_auto_refresh: bool = True):
+    """
+    Create an Application wired with test doubles for integration testing.
+
+    Args:
+        tasks: List of task objects to populate DummyQueue (default: [])
+        tmp_path: Path for temporary files (default: None)
+        disable_auto_refresh: Disable background auto-refresh (default: True)
+
+    Returns:
+        (app, state, controller, queue, agent, logger) tuple
+    """
+    # Import test doubles
+    from .testing_doubles import DummyQueue, DummyConfig, DummyPlanner, DummyAgent, DummyLogger
+
+    # Backends with test doubles
+    config = DummyConfig(tmp_path)
+    logger = DummyLogger()
+
+    # Default empty task list
+    if tasks is None:
+        tasks = []
+
+    queue = DummyQueue(tasks)
+    planner = DummyPlanner()
+    agent = DummyAgent()
+
+    # UI state + controller
+    state = UIState()
+    controller = TUIController(state, queue, config, planner, agent, logger)
+
+    # Initial load
+    controller.refresh_tasks()
+    state.message = f"Loaded {len(state.tasks)} tasks"
+
+    # UI pieces
+    cmd_widget = create_command_line(state)
+    layout = create_layout(state, cmd_widget)
+    key_bindings = create_keybindings(state, controller, cmd_widget)
+
+    # Minimal style for tests
+    style = Style.from_dict({
+        "statusbar": "reverse",
+        "separator": "fg:ansibrightblack",
+        "dim": "fg:ansibrightblack",
+        "yellow": "fg:ansiyellow",
+        "orange": "fg:ansibrightred",
+        "blue": "fg:ansiblue",
+        "cyan": "fg:ansicyan",
+        "magenta": "fg:ansimagenta",
+        "green": "fg:ansigreen",
+        "red": "fg:ansired",
+        "ansired": "fg:ansired",
+        "heading": "bold underline",
+        "section-title": "bold fg:ansicyan",
+        "success": "fg:ansigreen bold",
+        "error": "fg:ansired bold",
+        "file-created-title": "bold fg:ansigreen",
+        "file-modified-title": "bold fg:ansiyellow",
+        "file-deleted-title": "bold fg:ansired",
+        "file-created": "fg:ansigreen",
+        "file-modified": "fg:ansiyellow",
+        "file-deleted": "fg:ansired",
+        "error-codeblock": "fg:ansired",
+        "arg-key": "fg:ansibrightblack italic",
+    })
+
+    app = Application(
+        layout=layout,
+        key_bindings=key_bindings,
+        full_screen=False,  # Simpler for tests
+        style=style,
+        mouse_support=False,
+    )
+
+    if not disable_auto_refresh:
+        # Optional: enable auto-refresh for specific tests
+        async def auto_refresh():
+            while True:
+                await asyncio.sleep(2)
+                try:
+                    controller.refresh_tasks()
+                    app.invalidate()
+                except Exception as e:
+                    logger.error(f"Auto-refresh failed: {e}")
+
+        app.pre_run_callables.append(
+            lambda: app.create_background_task(auto_refresh())
+        )
+
+    return app, state, controller, queue, agent, logger
