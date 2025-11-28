@@ -15,7 +15,7 @@
 
 *An AI-driven agent manager for scientific research automation, powered by Claude Code's headless mode and MCP tools. Now with Slack integration!*
 
-[Features](#features) • [Installation](#installation) • [Usage](#usage) • [Slack](#slack-integration) • [Examples](#example-workflows)
+[Features](#features) • [Installation](#installation) • [Usage](#usage) • [TUI](#terminal-ui-tui) • [Slack](#slack-integration) • [Examples](#example-workflows)
 
 </div>
 
@@ -64,7 +64,14 @@ nightshift/
 │   ├── slack_metadata.py        # Task metadata persistence
 │   └── slack_middleware.py      # Request verification
 ├── interfaces/                  # User interfaces
-│   └── cli.py                   # Command-line interface
+│   ├── cli.py                   # Command-line interface
+│   └── tui/                     # Interactive terminal UI
+│       ├── app.py               # Application factory
+│       ├── controllers.py       # Business logic layer
+│       ├── widgets.py           # Custom prompt_toolkit controls
+│       ├── keybindings.py       # Keyboard shortcuts
+│       ├── layout.py            # UI layout composition
+│       └── models.py            # Data structures
 └── config/                      # Configuration files
     └── claude-code-tools-reference.md  # MCP tools reference
 ```
@@ -121,6 +128,9 @@ All NightShift data is stored in `~/.nightshift/`:
 
 - 💻 **CLI Interface**
   Simple commands for task management
+
+- 🖥️ **Interactive TUI**
+  Full-featured terminal UI with vim-like navigation
 
 - 💾 **Persistent Storage**
   SQLite database, centralized data directory
@@ -184,6 +194,7 @@ pip install -e .
 
 This installs all required dependencies including:
 - Claude Code CLI (via Claude Agent SDK)
+- prompt-toolkit (for interactive TUI)
 - Slack SDK (for Slack integration)
 - Flask (for webhook server)
 - Rich (for beautiful terminal output)
@@ -290,6 +301,48 @@ nightshift clear
 # Skip confirmation
 nightshift clear --confirm
 ```
+</details>
+
+---
+
+## Terminal UI (TUI)
+
+NightShift includes a full-featured interactive terminal interface for task management.
+
+<details>
+<summary><b>🖥️ Launch the TUI</b></summary>
+
+```bash
+nightshift tui
+```
+
+<img src="docs/images/tui-screenshot.png" alt="NightShift TUI" width="800"/>
+
+</details>
+
+<details>
+<summary><b>⌨️ Keybindings</b></summary>
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move down in task list |
+| `k` / `↑` | Move up in task list |
+| `Enter` / `a` | Approve selected task |
+| `r` | Reject/cancel task |
+| `e` | Review/edit task plan (opens $EDITOR) |
+| `d` | Delete task |
+| `Tab` | Cycle detail tabs (overview/execution/files/summary) |
+| `:` | Enter command mode |
+| `q` | Quit |
+
+**Command mode (`:`):**
+- `:queue [status]` - Filter tasks by status
+- `:submit <description>` - Submit new task
+- `:submit! <description>` - Submit and auto-approve
+- `:refresh` - Refresh task list
+- `:help` - Show available commands
+- `:quit` - Exit TUI
+
 </details>
 
 ---
