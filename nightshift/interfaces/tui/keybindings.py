@@ -13,14 +13,27 @@ from prompt_toolkit.application import run_in_terminal
 from .models import UIState
 
 
-def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
-    """Create keybindings for the TUI"""
+def create_keybindings(state: UIState, controller, cmd_widget, detail_window=None) -> KeyBindings:
+    """Create keybindings for the TUI
+
+    Args:
+        state: UI state
+        controller: TUI controller
+        cmd_widget: Command line widget
+        detail_window: Detail panel Window (for scroll render_info)
+    """
     kb = KeyBindings()
     cmd_buffer = cmd_widget.buffer
 
     # Define mode filters once
     is_command_mode = Condition(lambda: state.command_active)
     is_normal_mode = ~is_command_mode
+
+    def get_page_size():
+        """Get page size from render_info, or default"""
+        if detail_window and detail_window.render_info:
+            return max(10, detail_window.render_info.window_height - 2)
+        return 40
 
     # Movement: j/k and arrow keys for up/down navigation
     @kb.add('j', filter=is_normal_mode)
@@ -57,21 +70,25 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
     def _(event):
         """Switch to overview tab"""
         state.detail_tab = "overview"
+        state.detail_scroll_offset = 0
 
     @kb.add('2', filter=is_normal_mode)
     def _(event):
         """Switch to exec tab"""
         state.detail_tab = "exec"
+        state.detail_scroll_offset = 0
 
     @kb.add('3', filter=is_normal_mode)
     def _(event):
         """Switch to files tab"""
         state.detail_tab = "files"
+        state.detail_scroll_offset = 0
 
     @kb.add('4', filter=is_normal_mode)
     def _(event):
         """Switch to summary tab"""
         state.detail_tab = "summary"
+        state.detail_scroll_offset = 0
 
     # h/l for prev/next tab
     @kb.add('h', filter=is_normal_mode)
@@ -80,6 +97,7 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
         tabs = ["overview", "exec", "files", "summary"]
         current_idx = tabs.index(state.detail_tab)
         state.detail_tab = tabs[(current_idx - 1) % len(tabs)]
+        state.detail_scroll_offset = 0
 
     @kb.add('l', filter=is_normal_mode)
     def _(event):
@@ -87,6 +105,61 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
         tabs = ["overview", "exec", "files", "summary"]
         current_idx = tabs.index(state.detail_tab)
         state.detail_tab = tabs[(current_idx + 1) % len(tabs)]
+        state.detail_scroll_offset = 0
+
+    # Detail panel scrolling (clamping handled by DetailControl on next render)
+    @kb.add('c-d', filter=is_normal_mode)
+    def _(event):
+        """Scroll detail panel down (half page)"""
+        half_page = max(1, get_page_size() // 2)
+        state.detail_scroll_offset += half_page
+        get_app().invalidate()
+
+    @kb.add('c-u', filter=is_normal_mode)
+    def _(event):
+        """Scroll detail panel up (half page)"""
+        half_page = max(1, get_page_size() // 2)
+        state.detail_scroll_offset -= half_page
+        if state.detail_scroll_offset < 0:
+            state.detail_scroll_offset = 0
+        get_app().invalidate()
+
+    @kb.add('c-f', filter=is_normal_mode)
+    @kb.add('pagedown', filter=is_normal_mode)
+    def _(event):
+        """Scroll detail panel down (full page)"""
+        page = max(1, get_page_size() - 2)  # leave 2 lines overlap
+        state.detail_scroll_offset += page
+        get_app().invalidate()
+
+    @kb.add('c-b', filter=is_normal_mode)
+    @kb.add('pageup', filter=is_normal_mode)
+    def _(event):
+        """Scroll detail panel up (full page)"""
+        page = max(1, get_page_size() - 2)
+        state.detail_scroll_offset -= page
+        if state.detail_scroll_offset < 0:
+            state.detail_scroll_offset = 0
+        get_app().invalidate()
+
+    @kb.add('c-g', filter=is_normal_mode)
+    def _(event):
+        """Scroll to top of detail panel"""
+        state.detail_scroll_offset = 0
+        get_app().invalidate()
+
+    @kb.add('c-e', filter=is_normal_mode)
+    def _(event):
+        """Scroll to bottom of detail panel"""
+        # Set to large value; DetailControl will clamp on render
+        state.detail_scroll_offset = 999999
+        get_app().invalidate()
+
+    # Open current content in pager
+    @kb.add('o', filter=is_normal_mode)
+    def _(event):
+        """Open current tab content in $PAGER"""
+        controller.open_in_pager()
 
     # Quit
     @kb.add('q', filter=is_normal_mode)

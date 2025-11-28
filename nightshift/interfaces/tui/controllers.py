@@ -50,7 +50,7 @@ def extract_claude_text_from_result(result_path: str) -> str:
     return "".join(text_blocks)
 
 
-def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
+def format_exec_log_from_result(result_path: str) -> str:
     """
     Parse stream-json 'stdout' and render a human-readable execution log.
 
@@ -108,10 +108,8 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                             if isinstance(value, str) and len(value) > 100:
                                 # Multi-line string values (like file content)
                                 lines_out.append(f"  {key}:")
-                                for line in value.split('\n')[:50]:  # Limit to 50 lines
+                                for line in value.split('\n'):
                                     lines_out.append(f"    {line}")
-                                if value.count('\n') > 50:
-                                    lines_out.append(f"    ... ({value.count(chr(10)) - 50} more lines)")
                             else:
                                 # Short values on one line
                                 lines_out.append(f"  {key}: {value}")
@@ -140,10 +138,8 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
                     if isinstance(value, str) and len(value) > 100:
                         # Multi-line string values (like file content)
                         lines_out.append(f"  {key}:")
-                        for line in value.split('\n')[:50]:  # Limit to 50 lines
+                        for line in value.split('\n'):
                             lines_out.append(f"    {line}")
-                        if value.count('\n') > 50:
-                            lines_out.append(f"    ... ({value.count(chr(10)) - 50} more lines)")
                     else:
                         # Short values on one line
                         lines_out.append(f"  {key}: {value}")
@@ -157,12 +153,6 @@ def format_exec_log_from_result(result_path: str, max_lines: int = 200) -> str:
             elif subtype:
                 lines_out.append(f"Result: {subtype}")
             continue
-
-    # Clip to max_lines
-    if len(lines_out) > max_lines:
-        remainder = len(lines_out) - max_lines
-        lines_out = lines_out[:max_lines]
-        lines_out.append(f"... ({remainder} more lines not shown)")
 
     return "\n".join(lines_out)
 
@@ -224,6 +214,8 @@ class TUIController:
             st.files_info = self._load_files_info(task)
             st.summary_info = self._load_summary_info(task)
             st.last_loaded = datetime.utcnow()
+            # Reset scroll position for new task
+            self.state.detail_scroll_offset = 0
             return
 
         # Same task still selected: maybe update details and exec log
@@ -282,7 +274,7 @@ class TUIController:
         size = stat.st_size
         stdout = data.get("stdout", "")
 
-        formatted = format_exec_log_from_result(result_path, max_lines=200)
+        formatted = format_exec_log_from_result(result_path)
         if formatted:
             return formatted, mtime, size
 
@@ -793,3 +785,124 @@ class TUIController:
 
         from prompt_toolkit.application import run_in_terminal
         run_in_terminal(open_editor_and_refine)
+
+    def open_in_pager(self):
+        """Open current detail tab content in $PAGER for full viewing"""
+        import os
+        import tempfile
+        import subprocess
+
+        st = self.state.selected_task
+        tab = self.state.detail_tab
+
+        if not st.details:
+            self.state.message = "No task selected"
+            return
+
+        # Build content based on current tab
+        content_lines = []
+
+        if tab == "overview":
+            content_lines.append(f"Task: {st.task_id}")
+            content_lines.append(f"Status: {st.details.get('status', 'unknown').upper()}")
+            content_lines.append(f"Created: {st.details.get('created_at', 'N/A')}")
+            if st.details.get('started_at'):
+                content_lines.append(f"Started: {st.details['started_at']}")
+            if st.details.get('completed_at'):
+                content_lines.append(f"Completed: {st.details['completed_at']}")
+            if st.details.get('execution_time'):
+                content_lines.append(f"Execution Time: {st.details['execution_time']:.1f}s")
+            content_lines.append("")
+            content_lines.append("Description:")
+            content_lines.append(st.details.get('description', 'N/A'))
+            content_lines.append("")
+            if st.details.get('allowed_tools'):
+                content_lines.append("Allowed Tools:")
+                for tool in st.details['allowed_tools']:
+                    content_lines.append(f"  • {tool}")
+            if st.details.get('system_prompt'):
+                content_lines.append("")
+                content_lines.append("System Prompt:")
+                content_lines.append(st.details['system_prompt'])
+            if st.details.get('error_message'):
+                content_lines.append("")
+                content_lines.append("Error:")
+                content_lines.append(st.details['error_message'])
+
+        elif tab == "exec":
+            content_lines.append("═" * 60)
+            content_lines.append("EXECUTION LOG")
+            content_lines.append("═" * 60)
+            content_lines.append("")
+            if st.exec_snippet:
+                content_lines.append(st.exec_snippet)
+            else:
+                # Try to load full execution log
+                task = self.queue.get_task(st.task_id)
+                if task and task.result_path:
+                    full_log = format_exec_log_from_result(task.result_path)
+                    content_lines.append(full_log if full_log else "No execution log available")
+                else:
+                    content_lines.append("No execution log available")
+
+        elif tab == "files":
+            content_lines.append("═" * 60)
+            content_lines.append("FILE CHANGES")
+            content_lines.append("═" * 60)
+            content_lines.append("")
+            fi = st.files_info
+            if not fi:
+                content_lines.append("No file changes recorded for this task.")
+            else:
+                for change_type, label in [('created', 'Created'), ('modified', 'Modified'), ('deleted', 'Deleted')]:
+                    files = fi.get(change_type, [])
+                    if files:
+                        content_lines.append(f"{label} ({len(files)}):")
+                        for path in files:
+                            content_lines.append(f"  • {path}")
+                        content_lines.append("")
+
+        elif tab == "summary":
+            content_lines.append("═" * 60)
+            content_lines.append("TASK SUMMARY")
+            content_lines.append("═" * 60)
+            content_lines.append("")
+            info = st.summary_info
+            if not info:
+                content_lines.append("No summary available")
+            else:
+                content_lines.append(f"Task: {info.get('task_id', st.task_id)}")
+                content_lines.append(f"Status: {info.get('status', 'unknown').upper()}")
+                content_lines.append(f"Execution Time: {info.get('execution_time', 0.0):.1f}s")
+                if info.get('token_usage'):
+                    content_lines.append(f"Tokens Used: {info['token_usage']}")
+                content_lines.append("")
+                content_lines.append("Description:")
+                content_lines.append(info.get('description', 'No description'))
+                content_lines.append("")
+                if info.get('claude_summary'):
+                    content_lines.append("Claude's Response:")
+                    content_lines.append("-" * 40)
+                    content_lines.append(info['claude_summary'])
+                    content_lines.append("")
+                if info.get('error_message'):
+                    content_lines.append("Error:")
+                    content_lines.append(info['error_message'])
+
+        content = "\n".join(content_lines)
+
+        def open_pager():
+            # Write to temp file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                f.write(content)
+                temp_path = f.name
+
+            # Open in pager
+            pager = os.environ.get('PAGER', 'less')
+            try:
+                subprocess.run([pager, temp_path], check=False)
+            finally:
+                Path(temp_path).unlink()
+
+        from prompt_toolkit.application import run_in_terminal
+        run_in_terminal(open_pager)

@@ -220,14 +220,14 @@ def test_detail_files_tab_empty():
     assert "no file changes" in text.lower()
 
 
-def test_detail_files_tab_truncation():
-    """Test files tab truncates long file lists"""
+def test_detail_files_tab_shows_all_files():
+    """Test files tab shows all files (scrolling handles long lists)"""
     state = UIState()
     state.detail_tab = "files"
     st = state.selected_task
     st.task_id = "task_1"
     st.details = {"task_id": "task_1", "status": "completed"}
-    # Create more than 20 files (the max shown)
+    # Create many files
     st.files_info = {
         "created": [f"/file_{i}.py" for i in range(30)],
         "modified": [],
@@ -239,8 +239,9 @@ def test_detail_files_tab_truncation():
 
     text = "".join(t for _, t in fragments)
 
-    # Should show truncation message
-    assert "more" in text.lower() or "..." in text
+    # Should show all files (no truncation - scrolling handles it)
+    assert "/file_0.py" in text
+    assert "/file_29.py" in text
 
 
 def test_detail_summary_tab_success():
@@ -569,22 +570,21 @@ def test_detail_summary_error_codeblock_style():
     assert any("error-codeblock" in s for s in styles)
 
 
-def test_detail_summary_truncation():
-    """Test that summary tab truncates long description and claude_summary"""
+def test_detail_summary_shows_full_content():
+    """Test that summary tab shows full claude_summary (scrolling handles long content)"""
     state = UIState()
     state.detail_tab = "summary"
     st = state.selected_task
     st.task_id = "task_1"
     st.details = {"task_id": "task_1", "status": "completed"}
 
-    # Create long description and summary
-    long_description = "D" * 600
-    long_summary = "S" * 1300
+    # Create long summary with recognizable content
+    long_summary = "START_MARKER " + "content " * 200 + "END_MARKER"
 
     st.summary_info = {
         "task_id": "task_1",
         "status": "success",
-        "description": long_description,
+        "description": "Short description",
         "claude_summary": long_summary,
     }
 
@@ -592,8 +592,6 @@ def test_detail_summary_truncation():
     fragments = ctrl.get_text()
     text = "".join(t for _, t in fragments)
 
-    # Should show truncation
-    assert "..." in text
-    # Full strings should not be present
-    assert long_description not in text
-    assert long_summary not in text
+    # Should show full summary content (scrolling handles it)
+    assert "START_MARKER" in text
+    assert "END_MARKER" in text

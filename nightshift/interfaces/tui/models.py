@@ -3,8 +3,11 @@ UI State Models
 Dataclasses for TUI state management
 """
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 from datetime import datetime
+
+if TYPE_CHECKING:
+    from prompt_toolkit.layout import Window
 
 
 @dataclass
@@ -40,7 +43,7 @@ class UIState:
     """Global UI state for the TUI"""
     tasks: List[TaskRow] = field(default_factory=list)
     selected_index: int = 0
-    scroll_offset: int = 0
+    detail_scroll_offset: int = 0         # scroll position within detail panel
     status_filter: Optional[str] = None   # 'staged', 'running', etc.
     focus_panel: str = "list"             # 'list'|'detail'
     detail_tab: str = "overview"          # 'overview'|'exec'|'files'|'summary'
@@ -55,6 +58,9 @@ class UIState:
     busy_label: str = ""
 
     selected_task: SelectedTaskState = field(default_factory=SelectedTaskState)
+
+    # Window reference for scroll info (set after layout creation)
+    detail_window: Optional["Window"] = None
 
 
 def task_to_row(task) -> TaskRow:

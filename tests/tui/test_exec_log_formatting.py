@@ -33,7 +33,7 @@ def test_format_exec_log_assistant_message(tmp_path):
     stdout = "\n".join(json.dumps(e) for e in events)
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     assert "First line" in formatted
     assert "Second line" in formatted
@@ -53,7 +53,7 @@ def test_format_exec_log_tool_use(tmp_path):
     stdout = "\n".join(json.dumps(e) for e in events)
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     assert "🔧" in formatted
     assert "Read" in formatted
@@ -61,10 +61,10 @@ def test_format_exec_log_tool_use(tmp_path):
 
 
 def test_format_exec_log_tool_use_long_multiline_value(tmp_path):
-    """Test that long multiline tool arguments are truncated"""
+    """Test that long multiline tool arguments are shown in full"""
     result_path = tmp_path / "result.json"
 
-    # Create a very long multiline value
+    # Create a multiline value
     long_content = "\n".join([f"line {i}" for i in range(100)])
 
     events = [
@@ -77,10 +77,11 @@ def test_format_exec_log_tool_use_long_multiline_value(tmp_path):
     stdout = "\n".join(json.dumps(e) for e in events)
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
-    # Should be truncated with annotation (actual format uses "... (N more lines)")
-    assert "... (" in formatted and "more lines" in formatted.lower()
+    # Should include all lines (no truncation)
+    assert "line 0" in formatted
+    assert "line 99" in formatted
 
 
 def test_format_exec_log_result_success(tmp_path):
@@ -96,7 +97,7 @@ def test_format_exec_log_result_success(tmp_path):
     stdout = "\n".join(json.dumps(e) for e in events)
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     assert "✅" in formatted
     assert "success" in formatted.lower()
@@ -115,7 +116,7 @@ def test_format_exec_log_result_other_subtype(tmp_path):
     stdout = "\n".join(json.dumps(e) for e in events)
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     assert "Result:" in formatted or "error" in formatted
 
@@ -131,7 +132,7 @@ def test_format_exec_log_malformed_json(tmp_path):
 
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     # Should include valid lines
     assert "valid line" in formatted
@@ -140,19 +141,21 @@ def test_format_exec_log_malformed_json(tmp_path):
     assert "{invalid json here" in formatted
 
 
-def test_format_exec_log_max_lines_truncation(tmp_path):
-    """Test that max_lines parameter truncates output"""
+def test_format_exec_log_no_truncation(tmp_path):
+    """Test that output is not truncated - scrolling handles long content"""
     result_path = tmp_path / "result.json"
 
-    # Create >200 lines of events
-    events = [{"type": "text", "text": f"Line {i}"} for i in range(250)]
+    # Create many lines of events
+    events = [{"type": "text", "text": f"Line {i}"} for i in range(500)]
     stdout = "\n".join(json.dumps(e) for e in events)
     write_result(result_path, stdout)
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
-    # Should have truncation marker with specific format
-    assert "more lines not shown" in formatted.lower()
+    # Should include all lines (no truncation marker)
+    assert "Line 0" in formatted
+    assert "Line 499" in formatted
+    assert "not shown" not in formatted.lower()
 
 
 def test_format_exec_log_empty_stdout(tmp_path):
@@ -160,7 +163,7 @@ def test_format_exec_log_empty_stdout(tmp_path):
     result_path = tmp_path / "result.json"
     write_result(result_path, "")
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     assert formatted == ""
 
@@ -169,7 +172,7 @@ def test_format_exec_log_missing_file(tmp_path):
     """Test handling of missing result file"""
     result_path = tmp_path / "nonexistent.json"
 
-    formatted = format_exec_log_from_result(str(result_path), max_lines=200)
+    formatted = format_exec_log_from_result(str(result_path))
 
     assert formatted == ""
 
