@@ -22,13 +22,19 @@ def create_command_line(state: UIState):
 
 
 def create_root_container(state: UIState, cmd_widget):
-    """Create the root container for the TUI"""
+    """Create the root container for the TUI
+
+    Returns:
+        (container, detail_window) tuple - detail_window needed for scroll keybindings
+    """
+    # Create detail window separately so we can return it for keybindings
+    detail_window = create_detail_window(state)
 
     # Main body: task list | separator | detail panel
     body = VSplit([
         create_task_list_window(state),
         Window(width=1, char='│', style='class:separator'),
-        create_detail_window(state),
+        detail_window,
     ])
 
     # Status bar at bottom
@@ -59,10 +65,14 @@ def create_root_container(state: UIState, cmd_widget):
         ],
     )
 
-    return float_container
+    return float_container, detail_window
 
 
-def create_layout(state: UIState, cmd_widget) -> Layout:
-    """Create the prompt_toolkit Layout"""
-    root = create_root_container(state, cmd_widget)
-    return Layout(root)
+def create_layout(state: UIState, cmd_widget):
+    """Create the prompt_toolkit Layout
+
+    Returns:
+        (Layout, detail_window) tuple - detail_window needed for scroll keybindings
+    """
+    root, detail_window = create_root_container(state, cmd_widget)
+    return Layout(root), detail_window

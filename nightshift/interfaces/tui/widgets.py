@@ -39,32 +39,21 @@ class TaskListControl(FormattedTextControl):
 
 
 class DetailControl(FormattedTextControl):
-    """Control for displaying task details with scrolling support"""
-
-    # Visible lines in detail panel (approximate, will be clipped by window)
-    VISIBLE_LINES = 40
-    SCROLL_STEP = 10  # lines to scroll with Ctrl+D/U
+    """Control for displaying task details - returns full content, Window handles scrolling"""
 
     def __init__(self, state: UIState):
         self.state = state
-        self._total_lines = 0  # track total content lines for scroll bounds
         super().__init__(self.get_text)
 
-    @property
-    def total_lines(self) -> int:
-        """Return total number of content lines (for scroll bounds)"""
-        return self._total_lines
-
     def get_text(self):
-        """Generate formatted text for detail panel with scroll support"""
+        """Generate formatted text for detail panel - full content, no slicing"""
         st = self.state.selected_task
         tab = self.state.detail_tab
 
         if not st.details:
-            self._total_lines = 0
             return [("class:dim", "No task selected\n")]
 
-        # Build tab bar (always visible, not scrolled)
+        # Build tab bar
         tab_bar = []
         tab_names = [
             ("1", "Overview"),
@@ -82,39 +71,14 @@ class DetailControl(FormattedTextControl):
                 tab_bar.append(("class:dim", f" {key}:{name} "))
         tab_bar.append(("", "\n\n"))
 
-        # Build content lines (scrollable)
-        lines = self._build_content_lines(st, tab)
+        # Build full content lines
+        content_lines = self._build_content_lines(st, tab)
 
-        # Track total lines for scroll bounds
-        self._total_lines = len(lines)
-
-        # Apply scroll offset
-        offset = self.state.detail_scroll_offset
-        max_offset = max(0, self._total_lines - self.VISIBLE_LINES)
-        offset = min(offset, max_offset)  # clamp to valid range
-        self.state.detail_scroll_offset = offset  # update if clamped
-
-        # Slice visible portion
-        visible_lines = lines[offset:offset + self.VISIBLE_LINES]
-
-        # Build final output with scroll indicators
-        result = list(tab_bar)
-
-        # Show "more above" indicator
-        if offset > 0:
-            result.append(("class:dim", f"  ↑ {offset} more lines above (Ctrl+U to scroll up)\n"))
-
-        result.extend(visible_lines)
-
-        # Show "more below" indicator
-        remaining = self._total_lines - offset - len(visible_lines)
-        if remaining > 0:
-            result.append(("class:dim", f"  ↓ {remaining} more lines below (Ctrl+D to scroll down)\n"))
-
-        return result
+        # Return tab bar + full content (Window handles scrolling)
+        return tab_bar + content_lines
 
     def _build_content_lines(self, st, tab):
-        """Build all content lines for the current tab (without truncation)"""
+        """Build all content lines for the current tab"""
         lines = []
 
         if tab == "overview":
@@ -361,17 +325,31 @@ class StatusBarControl(FormattedTextControl):
         super().__init__(self.get_text)
 
     def get_text(self):
-        """Generate formatted text for status bar"""
+        """Generate formatted text for status bar with scroll indicators"""
         mode = "COMMAND" if self.state.command_active else "NORMAL"
         msg = self.state.busy_label or self.state.message or ""
         hints = "j/k:nav h/l:tabs a:approve r:review c:cancel d:delete s:submit ^d/^u:scroll o:pager q:quit"
 
+        # Get scroll info from detail_window if available
+        scroll_info = ""
+        if self.state.detail_window and self.state.detail_window.render_info:
+            info = self.state.detail_window.render_info
+            above = info.vertical_scroll
+            below = max(0, info.content_height - (info.vertical_scroll + info.window_height))
+            if above > 0 or below > 0:
+                parts = []
+                if above > 0:
+                    parts.append(f"↑{above}")
+                if below > 0:
+                    parts.append(f"↓{below}")
+                scroll_info = f" [{'/'.join(parts)}]"
+
         if msg and ("failed" in msg.lower() or "error" in msg.lower()):
-            text = f" {mode} | {msg[:120]}"
+            text = f" {mode}{scroll_info} | {msg[:120]}"
         elif msg:
-            text = f" {mode} | {hints} | {msg[:40]}"
+            text = f" {mode}{scroll_info} | {hints} | {msg[:40]}"
         else:
-            text = f" {mode} | {hints}"
+            text = f" {mode}{scroll_info} | {hints}"
 
         return [("class:statusbar", text)]
 
@@ -388,11 +366,17 @@ def create_task_list_window(state: UIState) -> Window:
 
 
 def create_detail_window(state: UIState) -> Window:
-    """Create the detail panel window"""
+    """Create the detail panel window with scroll support"""
+    from prompt_toolkit.layout.margins import ScrollbarMargin
+
     return Window(
         DetailControl(state),
         wrap_lines=True,
         always_hide_cursor=True,
+        # Drive vertical scroll from state
+        get_vertical_scroll=lambda window: state.detail_scroll_offset,
+        # Visual scrollbar on right side
+        right_margins=[ScrollbarMargin(display_arrows=True)],
     )
 
 

@@ -57,6 +57,9 @@ class UIState:
 
     selected_task: SelectedTaskState = field(default_factory=SelectedTaskState)
 
+    # Window reference for scroll info (set after layout creation)
+    detail_window: Optional[object] = None
+
 
 def task_to_row(task) -> TaskRow:
     """Convert a Task object to a TaskRow for display"""

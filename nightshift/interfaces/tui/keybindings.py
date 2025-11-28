@@ -13,14 +13,38 @@ from prompt_toolkit.application import run_in_terminal
 from .models import UIState
 
 
-def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
-    """Create keybindings for the TUI"""
+def create_keybindings(state: UIState, controller, cmd_widget, detail_window=None) -> KeyBindings:
+    """Create keybindings for the TUI
+
+    Args:
+        state: UI state
+        controller: TUI controller
+        cmd_widget: Command line widget
+        detail_window: Detail panel Window (for scroll render_info)
+    """
     kb = KeyBindings()
     cmd_buffer = cmd_widget.buffer
 
     # Define mode filters once
     is_command_mode = Condition(lambda: state.command_active)
     is_normal_mode = ~is_command_mode
+
+    def get_scroll_info():
+        """Get scroll info from detail window render_info"""
+        if detail_window and detail_window.render_info:
+            info = detail_window.render_info
+            return {
+                'window_height': info.window_height,
+                'content_height': info.content_height,
+                'vertical_scroll': info.vertical_scroll,
+            }
+        return {'window_height': 20, 'content_height': 0, 'vertical_scroll': 0}
+
+    def clamp_scroll():
+        """Clamp scroll offset to valid range"""
+        info = get_scroll_info()
+        max_scroll = max(0, info['content_height'] - info['window_height'])
+        state.detail_scroll_offset = max(0, min(state.detail_scroll_offset, max_scroll))
 
     # Movement: j/k and arrow keys for up/down navigation
     @kb.add('j', filter=is_normal_mode)
@@ -94,33 +118,43 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
         state.detail_tab = tabs[(current_idx + 1) % len(tabs)]
         state.detail_scroll_offset = 0
 
-    # Detail panel scrolling
-    SCROLL_STEP = 10  # lines per Ctrl+D/U
-
+    # Detail panel scrolling (uses dynamic page size from render_info)
     @kb.add('c-d', filter=is_normal_mode)
-    @kb.add('pagedown', filter=is_normal_mode)
     def _(event):
-        """Scroll detail panel down"""
-        state.detail_scroll_offset += SCROLL_STEP
+        """Scroll detail panel down (half page)"""
+        info = get_scroll_info()
+        half_page = max(1, info['window_height'] // 2)
+        state.detail_scroll_offset += half_page
+        clamp_scroll()
         get_app().invalidate()
 
     @kb.add('c-u', filter=is_normal_mode)
-    @kb.add('pageup', filter=is_normal_mode)
     def _(event):
-        """Scroll detail panel up"""
-        state.detail_scroll_offset = max(0, state.detail_scroll_offset - SCROLL_STEP)
+        """Scroll detail panel up (half page)"""
+        info = get_scroll_info()
+        half_page = max(1, info['window_height'] // 2)
+        state.detail_scroll_offset -= half_page
+        clamp_scroll()
         get_app().invalidate()
 
     @kb.add('c-f', filter=is_normal_mode)
+    @kb.add('pagedown', filter=is_normal_mode)
     def _(event):
         """Scroll detail panel down (full page)"""
-        state.detail_scroll_offset += SCROLL_STEP * 3
+        info = get_scroll_info()
+        page = max(1, info['window_height'] - 2)  # leave 2 lines overlap
+        state.detail_scroll_offset += page
+        clamp_scroll()
         get_app().invalidate()
 
     @kb.add('c-b', filter=is_normal_mode)
+    @kb.add('pageup', filter=is_normal_mode)
     def _(event):
         """Scroll detail panel up (full page)"""
-        state.detail_scroll_offset = max(0, state.detail_scroll_offset - SCROLL_STEP * 3)
+        info = get_scroll_info()
+        page = max(1, info['window_height'] - 2)
+        state.detail_scroll_offset -= page
+        clamp_scroll()
         get_app().invalidate()
 
     @kb.add('c-g', filter=is_normal_mode)
@@ -132,7 +166,8 @@ def create_keybindings(state: UIState, controller, cmd_widget) -> KeyBindings:
     @kb.add('c-e', filter=is_normal_mode)
     def _(event):
         """Scroll to bottom of detail panel"""
-        state.detail_scroll_offset = 99999  # will be clamped by DetailControl
+        info = get_scroll_info()
+        state.detail_scroll_offset = max(0, info['content_height'] - info['window_height'])
         get_app().invalidate()
 
     # Open current content in pager

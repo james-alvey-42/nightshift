@@ -46,11 +46,14 @@ def create_app() -> Application:
     # Create command line widget
     cmd_widget = create_command_line(state)
 
-    # Create layout
-    layout = create_layout(state, cmd_widget)
+    # Create layout (returns detail_window for keybindings)
+    layout, detail_window = create_layout(state, cmd_widget)
 
-    # Create keybindings
-    key_bindings = create_keybindings(state, controller, cmd_widget)
+    # Store detail_window on state for status bar scroll indicators
+    state.detail_window = detail_window
+
+    # Create keybindings (pass detail_window for scroll support)
+    key_bindings = create_keybindings(state, controller, cmd_widget, detail_window)
 
     # Define style - use terminal color palette
     style = Style.from_dict({
@@ -152,8 +155,9 @@ def create_app_for_test(tasks=None, tmp_path=None, disable_auto_refresh: bool = 
 
     # UI pieces
     cmd_widget = create_command_line(state)
-    layout = create_layout(state, cmd_widget)
-    key_bindings = create_keybindings(state, controller, cmd_widget)
+    layout, detail_window = create_layout(state, cmd_widget)
+    state.detail_window = detail_window
+    key_bindings = create_keybindings(state, controller, cmd_widget, detail_window)
 
     # Minimal style for tests
     style = Style.from_dict({
