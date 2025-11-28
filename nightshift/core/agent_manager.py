@@ -92,20 +92,6 @@ class AgentManager:
             # Set up environment variables
             env = dict(os.environ)
 
-            # Remove ANTHROPIC_API_KEY to ensure Claude CLI uses Claude Pro account authentication
-            # via CLAUDE_CODE_OAUTH_TOKEN instead. The OAuth token is obtained by running
-            # 'claude setup-token' and should be set in the user's shell profile as
-            # CLAUDE_CODE_OAUTH_TOKEN. This ensures tasks use the Claude Pro subscription.
-            if 'ANTHROPIC_API_KEY' in env:
-                del env['ANTHROPIC_API_KEY']
-                self.logger.info("Removed ANTHROPIC_API_KEY from subprocess environment")
-
-            # Verify CLAUDE_CODE_OAUTH_TOKEN is present for authentication
-            if 'CLAUDE_CODE_OAUTH_TOKEN' in env:
-                self.logger.info("Using CLAUDE_CODE_OAUTH_TOKEN for Claude Pro authentication")
-            else:
-                self.logger.warning("CLAUDE_CODE_OAUTH_TOKEN not found in environment. Run 'claude setup-token' and add to shell profile.")
-
             # If needs_git, try to get gh token for sandbox compatibility
             if task.needs_git:
                 # Try to get gh token from gh CLI
