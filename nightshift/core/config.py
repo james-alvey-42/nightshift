@@ -56,6 +56,9 @@ class Config:
         # Load Slack configuration
         self._load_slack_config()
 
+        # Load executor configuration
+        self._load_executor_config()
+
     def get_log_dir(self) -> Path:
         """Get logs directory"""
         return self.logs_dir
@@ -182,3 +185,23 @@ class Config:
         if not token or len(token) < 12:
             return "***"
         return f"{token[:8]}...{token[-4:]}"
+
+    def _load_executor_config(self):
+        """Load task executor configuration from environment variables"""
+        # Max concurrent task executions (default: 3)
+        self.executor_max_workers = int(os.environ.get("NIGHTSHIFT_MAX_WORKERS", "3"))
+
+        # Polling interval in seconds (default: 1.0)
+        self.executor_poll_interval = float(os.environ.get("NIGHTSHIFT_POLL_INTERVAL", "1.0"))
+
+        # Auto-start executor with CLI/Slack server (default: true)
+        auto_executor = os.environ.get("NIGHTSHIFT_AUTO_EXECUTOR", "true").lower()
+        self.executor_auto_start = auto_executor in ("true", "1", "yes")
+
+    def get_executor_config(self) -> dict:
+        """Get current executor configuration"""
+        return {
+            "max_workers": self.executor_max_workers,
+            "poll_interval": self.executor_poll_interval,
+            "auto_start": self.executor_auto_start
+        }

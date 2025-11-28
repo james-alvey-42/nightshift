@@ -55,7 +55,7 @@ class SlackFormatter:
                     },
                     {
                         "type": "mrkdwn",
-                        "text": f"*Estimated:*\n~{task.estimated_tokens} tokens, ~{task.estimated_time}s"
+                        "text": f"*Timeout:*\n{task.timeout_seconds}s ({task.timeout_seconds // 60}m)"
                     }
                 ]
             },
