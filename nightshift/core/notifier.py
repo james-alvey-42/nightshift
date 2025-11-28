@@ -20,13 +20,15 @@ class Notifier:
         self,
         notification_dir: str = "notifications",
         slack_client: Optional[Any] = None,
-        slack_metadata_store: Optional[Any] = None
+        slack_metadata_store: Optional[Any] = None,
+        enable_terminal_output: bool = True
     ):
         self.notification_dir = Path(notification_dir)
         self.notification_dir.mkdir(parents=True, exist_ok=True)
         self.console = Console()
         self.slack_client = slack_client
         self.slack_metadata = slack_metadata_store
+        self.enable_terminal_output = enable_terminal_output
 
     def generate_summary(
         self,
@@ -94,7 +96,9 @@ class Notifier:
             try:
                 self._send_slack(summary)
             except Exception as e:
-                self.console.print(f"[yellow]Warning: Slack notification failed: {e}[/yellow]")
+                # Only print warning if terminal output is enabled
+                if self.enable_terminal_output:
+                    self.console.print(f"[yellow]Warning: Slack notification failed: {e}[/yellow]")
 
     def _save_notification(self, summary: Dict[str, Any]):
         """Save notification to file"""
@@ -105,6 +109,9 @@ class Notifier:
 
     def _display_terminal(self, summary: Dict[str, Any]):
         """Display notification in terminal"""
+        # Skip terminal output if disabled (e.g., when running in TUI mode)
+        if not self.enable_terminal_output:
+            return
 
         status_emoji = "✅" if summary["status"] == "success" else "❌"
         status_color = "green" if summary["status"] == "success" else "red"

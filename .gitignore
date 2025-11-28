@@ -54,6 +54,13 @@ logs/
 database/
 notifications/
 
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
 # Documentation artifacts
 nightshift-ideas.pdf
 arxiv_*.md

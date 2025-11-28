@@ -284,6 +284,14 @@ class TaskQueue:
 
             return tasks
 
+    def delete_task(self, task_id: str) -> bool:
+        """Delete a task and its logs"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM task_logs WHERE task_id = ?", (task_id,))
+            cursor = conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
     def update_status(
         self,
         task_id: str,
@@ -327,6 +335,7 @@ class TaskQueue:
         description: str,
         allowed_tools: Optional[List[str]] = None,
         allowed_directories: Optional[List[str]] = None,
+        needs_git: Optional[bool] = None,
         system_prompt: Optional[str] = None,
         timeout_seconds: Optional[int] = None
     ) -> bool:
@@ -342,6 +351,7 @@ class TaskQueue:
                     description = ?,
                     allowed_tools = ?,
                     allowed_directories = ?,
+                    needs_git = ?,
                     system_prompt = ?,
                     timeout_seconds = ?,
                     updated_at = ?
@@ -350,6 +360,7 @@ class TaskQueue:
                     description,
                     json.dumps(allowed_tools) if allowed_tools else None,
                     json.dumps(allowed_directories) if allowed_directories else None,
+                    1 if needs_git else 0,
                     system_prompt,
                     timeout_seconds,
                     now,

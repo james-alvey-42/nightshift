@@ -931,6 +931,12 @@ def clear(ctx, confirm):
 
 
 @cli.command()
+@click.pass_context
+def tui(ctx):
+    """Launch interactive terminal UI"""
+    from .tui import run
+    run()
+    
 @click.option('--shell', type=click.Choice(['bash', 'zsh', 'fish', 'powershell'], case_sensitive=False),
               help='Shell type (auto-detected if not specified)')
 @click.option('--install', is_flag=True, help='Automatically add completion to shell config file')

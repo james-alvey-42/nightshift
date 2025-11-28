@@ -29,7 +29,8 @@ class AgentManager:
         output_dir: str = "output",
         claude_bin: str = "claude",
         enable_notifications: bool = True,
-        enable_sandbox: bool = True
+        enable_sandbox: bool = True,
+        enable_terminal_notifications: bool = True
     ):
         self.task_queue = task_queue
         self.logger = logger
@@ -41,7 +42,10 @@ class AgentManager:
 
         # Notifier uses notifications directory next to output
         notifications_dir = self.output_dir.parent / "notifications"
-        self.notifier = Notifier(notification_dir=str(notifications_dir)) if enable_notifications else None
+        self.notifier = Notifier(
+            notification_dir=str(notifications_dir),
+            enable_terminal_output=enable_terminal_notifications
+        ) if enable_notifications else None
 
         # Sandbox manager for macOS isolation
         self.sandbox = SandboxManager() if enable_sandbox and SandboxManager.is_available() else None
