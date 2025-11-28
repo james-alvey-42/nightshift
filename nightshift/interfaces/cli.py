@@ -129,7 +129,8 @@ def cli(ctx):
     ctx.obj['task_queue'] = TaskQueue(db_path=str(config.get_database_path()))
     ctx.obj['task_planner'] = TaskPlanner(
         ctx.obj['logger'],
-        tools_reference_path=str(config.get_tools_reference_path())
+        tools_reference_path=str(config.get_tools_reference_path()),
+        directory_map_path=str(config.get_directory_map_path())
     )
     ctx.obj['agent_manager'] = AgentManager(
         ctx.obj['task_queue'],

@@ -51,6 +51,7 @@ class Config:
         self.config_dir = package_dir / "config"
 
         self.tools_reference_path = self.config_dir / "claude-code-tools-reference.md"
+        self.directory_map_path = self.config_dir / "directory-map.md"
         self.slack_config_path = self.base_dir / "slack_config.json"
 
         # Load Slack configuration
@@ -78,6 +79,10 @@ class Config:
     def get_tools_reference_path(self) -> Path:
         """Get tools reference file path"""
         return self.tools_reference_path
+
+    def get_directory_map_path(self) -> Path:
+        """Get directory map file path"""
+        return self.directory_map_path
 
     def get_slack_metadata_dir(self) -> Path:
         """Get Slack metadata directory"""
