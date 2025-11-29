@@ -4,6 +4,7 @@ Handles task creation, state transitions, and persistence
 """
 import sqlite3
 import json
+from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -58,20 +59,33 @@ class TaskQueue:
         self._init_db()
         self._enable_wal_mode()
 
-    def _get_connection(self):
+    def _open_connection(self):
         """
-        Get a database connection with settings optimized for concurrent access
+        Open a raw database connection (caller must close)
 
         Returns:
             sqlite3.Connection with thread-safe settings
         """
-        conn = sqlite3.connect(
+        return sqlite3.connect(
             str(self.db_path),
             check_same_thread=False,  # Allow multi-thread access
             timeout=30.0,  # Wait up to 30s for database locks
             isolation_level='DEFERRED'  # Reduce lock contention
         )
-        return conn
+
+    @contextmanager
+    def _get_connection(self):
+        """
+        Context manager for database connections (auto-closes)
+
+        Yields:
+            sqlite3.Connection with thread-safe settings
+        """
+        conn = self._open_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _enable_wal_mode(self):
         """
@@ -404,7 +418,7 @@ class TaskQueue:
         Returns:
             Task object if one was acquired, None if no COMMITTED tasks available
         """
-        conn = self._get_connection()
+        conn = self._open_connection()
         try:
             # BEGIN IMMEDIATE acquires a write lock immediately
             conn.execute("BEGIN IMMEDIATE")

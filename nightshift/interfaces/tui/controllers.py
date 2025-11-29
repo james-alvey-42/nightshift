@@ -5,7 +5,7 @@ Business logic layer that interfaces with NightShift core
 import json
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from prompt_toolkit.application.current import get_app
@@ -213,7 +213,7 @@ class TUIController:
             st.exec_snippet, st.log_mtime, st.log_size = self._load_exec_snippet(task)
             st.files_info = self._load_files_info(task)
             st.summary_info = self._load_summary_info(task)
-            st.last_loaded = datetime.utcnow()
+            st.last_loaded = datetime.now(timezone.utc)
             # Reset scroll position for new task
             self.state.detail_scroll_offset = 0
             return
@@ -241,12 +241,12 @@ class TUIController:
                 prev_size=st.log_size,
                 current_snippet=st.exec_snippet,
             )
-            st.last_loaded = datetime.utcnow()
+            st.last_loaded = datetime.now(timezone.utc)
         else:
             # For non-running tasks, load exec snippet only once
             if not st.exec_snippet:
                 st.exec_snippet, st.log_mtime, st.log_size = self._load_exec_snippet(task)
-                st.last_loaded = datetime.utcnow()
+                st.last_loaded = datetime.now(timezone.utc)
 
     def _load_exec_snippet(self, task):
         """
