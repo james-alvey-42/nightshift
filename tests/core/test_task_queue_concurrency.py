@@ -222,8 +222,8 @@ class TestConnectionBehavior:
         # Create a task with one connection
         queue.create_task(task_id="task_001", description="Test")
 
-        # Get multiple connections
-        conns = [queue._get_connection() for _ in range(5)]
+        # Get multiple raw connections (use _open_connection for raw access)
+        conns = [queue._open_connection() for _ in range(5)]
 
         # All connections should be able to read the task
         for conn in conns:
@@ -234,12 +234,12 @@ class TestConnectionBehavior:
             conn.close()
 
     def test_new_connection_each_call(self, tmp_path):
-        """_get_connection creates a new connection each time"""
+        """_open_connection creates a new connection each time"""
         db_path = tmp_path / "test.db"
         queue = TaskQueue(db_path=str(db_path))
 
-        conn1 = queue._get_connection()
-        conn2 = queue._get_connection()
+        conn1 = queue._open_connection()
+        conn2 = queue._open_connection()
 
         # Each call creates a new connection object
         assert id(conn1) != id(conn2)
