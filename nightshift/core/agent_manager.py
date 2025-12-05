@@ -126,7 +126,8 @@ class AgentManager:
         try:
             # Build Claude command (potentially wrapped with sandbox)
             # Note: working_dir is used as subprocess cwd, not as a CLI flag
-            cmd, mcp_config_path = self._build_command(task)
+            # Pass working_dir to sandbox manager for proper write permissions
+            cmd, mcp_config_path = self._build_command(task, working_dir)
 
             self.logger.log_task_started(task.task_id, cmd)
 
@@ -532,12 +533,13 @@ class AgentManager:
             elif scratch_dir:
                 self.logger.info(f"Scratch directory preserved for task resumption: {scratch_dir}")
 
-    def _build_command(self, task: Task) -> tuple[str, Optional[str]]:
+    def _build_command(self, task: Task, working_dir: Optional[str] = None) -> tuple[str, Optional[str]]:
         """
         Build Claude CLI command from task specification.
 
         Args:
             task: Task object to build command for
+            working_dir: Working directory path (needed for sandbox permissions)
 
         Returns:
             Tuple of (command_string, mcp_config_path)
