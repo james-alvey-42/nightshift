@@ -190,7 +190,11 @@ def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allo
             allowed_directories=allowed_directories,
             needs_git=plan.get('needs_git', False),
             system_prompt=plan['system_prompt'],
-            timeout_seconds=timeout
+            timeout_seconds=timeout,
+            use_scratch=plan.get('use_scratch', True),
+            working_directory=plan.get('working_directory'),
+            scratch_git_repos=plan.get('scratch_git_repos', []),
+            scratch_copy_paths=plan.get('scratch_copy_paths', [])
         )
 
         logger.log_task_created(task_id, description)

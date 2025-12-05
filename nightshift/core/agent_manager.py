@@ -19,6 +19,7 @@ from .file_tracker import FileTracker
 from .notifier import Notifier
 from .sandbox import SandboxManager
 from .mcp_config_manager import MCPConfigManager
+from .scratch_manager import ScratchManager
 
 
 class AgentManager:
@@ -70,6 +71,9 @@ class AgentManager:
             base_config_path=mcp_config_path, logger=logger
         )
 
+        # Scratch manager for isolated task execution
+        self.scratch_manager = ScratchManager(logger=logger)
+
     def execute_task(self, task: Task, timeout: Optional[int] = None) -> Dict[str, Any]:
         """
         Execute a task using Claude headless mode
@@ -87,13 +91,31 @@ class AgentManager:
 
         start_time = time.time()
 
-        # Create scratch directory for task isolation
-        scratch_dir = Path.home() / ".nightshift" / "worktrees" / task.task_id
-        scratch_dir.mkdir(parents=True, exist_ok=True)
-        self.logger.info(f"Created scratch directory for task {task.task_id}: {scratch_dir}")
+        # Determine working directory based on task configuration
+        scratch_dir = None
+        working_dir = None
 
-        # Start file tracking in scratch directory
-        file_tracker = FileTracker(watch_dir=str(scratch_dir))
+        if task.use_scratch:
+            # Create isolated scratch directory with task resources
+            self.logger.info(f"Setting up scratch directory for task {task.task_id}")
+            scratch_dir = self.scratch_manager.create_scratch(
+                task_id=task.task_id,
+                git_repos=task.scratch_git_repos,
+                copy_paths=task.scratch_copy_paths
+            )
+            working_dir = str(scratch_dir)
+            self.logger.info(f"Scratch directory ready: {scratch_dir}")
+        elif task.working_directory:
+            # Use explicitly specified working directory
+            working_dir = task.working_directory
+            self.logger.info(f"Using specified working directory: {working_dir}")
+        else:
+            # Use current working directory
+            working_dir = str(Path.cwd())
+            self.logger.info(f"Using current working directory: {working_dir}")
+
+        # Start file tracking in working directory
+        file_tracker = FileTracker(watch_dir=working_dir)
         file_tracker.start_tracking()
 
         # Track MCP config for cleanup
@@ -101,7 +123,7 @@ class AgentManager:
 
         try:
             # Build Claude command (potentially wrapped with sandbox)
-            cmd, mcp_config_path = self._build_command(task, scratch_dir=str(scratch_dir))
+            cmd, mcp_config_path = self._build_command(task, working_dir=working_dir)
 
             # Log the exact command for debugging
             self.logger.info("=" * 80)
@@ -479,22 +501,36 @@ class AgentManager:
                         f"Failed to cleanup MCP config {mcp_config_path}: {e}"
                     )
 
-            # Cleanup scratch directory after task completion
-            try:
-                import shutil
-                if scratch_dir.exists():
-                    shutil.rmtree(scratch_dir)
-                    self.logger.info(f"Cleaned up scratch directory: {scratch_dir}")
-            except Exception as e:
-                self.logger.warning(f"Failed to cleanup scratch directory {scratch_dir}: {e}")
+            # Cleanup scratch directory if used
+            if scratch_dir:
+                try:
+                    self.logger.info(f"Tearing down scratch directory: {scratch_dir}")
+                    result = self.scratch_manager.teardown_scratch(
+                        scratch_dir=scratch_dir,
+                        copy_back=True,  # Copy modified files back to original locations
+                        keep_scratch=False  # Clean up scratch after copying
+                    )
 
-    def _build_command(self, task: Task, scratch_dir: Optional[str] = None) -> tuple[str, Optional[str]]:
+                    if result['copied_files']:
+                        self.logger.info(f"Copied {len(result['copied_files'])} files back from scratch")
+                        for file in result['copied_files'][:10]:  # Log first 10
+                            self.logger.debug(f"  - {file}")
+
+                    if result['errors']:
+                        self.logger.warning(f"Scratch teardown had {len(result['errors'])} errors")
+                        for error in result['errors'][:5]:  # Log first 5 errors
+                            self.logger.warning(f"  - {error}")
+
+                except Exception as e:
+                    self.logger.error(f"Failed to teardown scratch directory {scratch_dir}: {e}")
+
+    def _build_command(self, task: Task, working_dir: Optional[str] = None) -> tuple[str, Optional[str]]:
         """
         Build Claude CLI command from task specification.
 
         Args:
             task: Task object to build command for
-            scratch_dir: Optional scratch directory path for task isolation
+            working_dir: Working directory path for task execution
 
         Returns:
             Tuple of (command_string, mcp_config_path)
@@ -566,23 +602,25 @@ class AgentManager:
             escaped_prompt = task.system_prompt.replace('"', '\\"')
             cmd_parts.append(f'--system-prompt "{escaped_prompt}"')
 
-        # Set working directory to scratch directory if provided
-        if scratch_dir:
-            cmd_parts.append(f'--working-directory "{scratch_dir}"')
-            self.logger.info(f"Setting working directory to scratch: {scratch_dir}")
+        # Set working directory if provided
+        if working_dir:
+            cmd_parts.append(f'--working-directory "{working_dir}"')
+            self.logger.info(f"Setting working directory to: {working_dir}")
 
         claude_cmd = " ".join(cmd_parts)
 
         # Wrap with sandbox if enabled
         if self.sandbox:
             try:
-                # Build list of allowed directories including scratch directory
+                # Build list of allowed directories
                 allowed_dirs = []
 
-                # Always include scratch directory if provided
-                if scratch_dir:
-                    allowed_dirs.append(scratch_dir)
-                    self.logger.info(f"Including scratch directory in sandbox: {scratch_dir}")
+                # Include working directory if it should be writable
+                # (scratch directories are always writable, explicit working_dir may or may not be)
+                if task.use_scratch and working_dir:
+                    # Scratch directory should always be writable
+                    allowed_dirs.append(working_dir)
+                    self.logger.info(f"Including scratch working directory in sandbox: {working_dir}")
 
                 # Add task-specific allowed directories if specified
                 if task.allowed_directories:
@@ -595,7 +633,7 @@ class AgentManager:
                         f"Sandboxing task with allowed directories: {validated_dirs}"
                     )
                 else:
-                    # If no directories specified (and no scratch dir), run in read-only mode
+                    # If no directories specified, run in read-only mode
                     self.logger.info(
                         "Sandboxing task in READ-ONLY mode (no write directories specified)"
                     )

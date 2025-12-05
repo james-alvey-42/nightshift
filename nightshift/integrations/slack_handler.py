@@ -121,7 +121,11 @@ class SlackEventHandler:
                 allowed_directories=plan.get('allowed_directories', []),
                 needs_git=plan.get('needs_git', False),
                 system_prompt=plan['system_prompt'],
-                timeout_seconds=900  # 15 minutes default for Slack tasks
+                timeout_seconds=900,  # 15 minutes default for Slack tasks
+                use_scratch=plan.get('use_scratch', True),
+                working_directory=plan.get('working_directory'),
+                scratch_git_repos=plan.get('scratch_git_repos', []),
+                scratch_copy_paths=plan.get('scratch_copy_paths', [])
             )
 
             # Store Slack metadata
