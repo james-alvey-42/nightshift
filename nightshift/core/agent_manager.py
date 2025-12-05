@@ -123,11 +123,13 @@ class AgentManager:
 
         try:
             # Build Claude command (potentially wrapped with sandbox)
-            cmd, mcp_config_path = self._build_command(task, working_dir=working_dir)
+            # Note: working_dir is used as subprocess cwd, not as a CLI flag
+            cmd, mcp_config_path = self._build_command(task)
 
             # Log the exact command for debugging
             self.logger.info("=" * 80)
             self.logger.info("EXECUTING COMMAND:")
+            self.logger.info(f"Working directory: {working_dir}")
             if self.sandbox and task.allowed_directories:
                 self.logger.info("🔒 SANDBOXED EXECUTION (writes restricted)")
                 self.logger.info(f"   Allowed directories: {task.allowed_directories}")
@@ -198,6 +200,7 @@ class AgentManager:
             output_file = self.output_dir / f"{task.task_id}_output.json"
 
             # Execute with Popen to get PID immediately
+            # Set working directory via cwd parameter
             process = subprocess.Popen(
                 cmd,
                 shell=True,
@@ -205,6 +208,7 @@ class AgentManager:
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
+                cwd=working_dir  # Change to working directory (scratch or explicit)
             )
 
             # Store PID and result path in task metadata immediately
@@ -524,17 +528,19 @@ class AgentManager:
                 except Exception as e:
                     self.logger.error(f"Failed to teardown scratch directory {scratch_dir}: {e}")
 
-    def _build_command(self, task: Task, working_dir: Optional[str] = None) -> tuple[str, Optional[str]]:
+    def _build_command(self, task: Task) -> tuple[str, Optional[str]]:
         """
         Build Claude CLI command from task specification.
 
         Args:
             task: Task object to build command for
-            working_dir: Working directory path for task execution
 
         Returns:
             Tuple of (command_string, mcp_config_path)
             mcp_config_path is returned for cleanup after execution
+
+        Note:
+            Working directory is set via subprocess cwd parameter, not CLI flag
         """
         cmd_parts = [self.claude_bin, "-p"]
 
@@ -601,11 +607,6 @@ class AgentManager:
             # Escape quotes in system prompt
             escaped_prompt = task.system_prompt.replace('"', '\\"')
             cmd_parts.append(f'--system-prompt "{escaped_prompt}"')
-
-        # Set working directory if provided
-        if working_dir:
-            cmd_parts.append(f'--working-directory "{working_dir}"')
-            self.logger.info(f"Setting working directory to: {working_dir}")
 
         claude_cmd = " ".join(cmd_parts)
 
