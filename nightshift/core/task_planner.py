@@ -167,8 +167,8 @@ Guidelines:
 - Specify which files or directories need to be copied
 - The task will execute in an isolated scratch directory with ONLY the resources you specify
 - Examples:
-  * Task modifying current git repo → scratch_git_repos: [{"source": "{Path.cwd()}"}]
-  * Task analyzing a specific file → scratch_copy_paths: [{"source": "/path/to/file.txt"}]
+  * Task modifying current git repo → scratch_git_repos: [{{"source": "{Path.cwd()}"}}]
+  * Task analyzing a specific file → scratch_copy_paths: [{{"source": "/path/to/file.txt"}}]
   * Task working across multiple repos → list all repos in scratch_git_repos
 - If uncertain, default to copying the current working directory if it's a git repo
 """
