@@ -35,6 +35,7 @@ class AgentManager:
         enable_sandbox: bool = True,
         enable_terminal_notifications: bool = True,
         mcp_config_path: Optional[str] = None,
+        cleanup_scratch: bool = False,  # Don't cleanup scratch for task resumption
     ):
         self.task_queue = task_queue
         self.logger = logger
@@ -43,6 +44,7 @@ class AgentManager:
         self.claude_bin = claude_bin
         self.enable_notifications = enable_notifications
         self.enable_sandbox = enable_sandbox
+        self.cleanup_scratch = cleanup_scratch
 
         # Notifier uses notifications directory next to output
         notifications_dir = self.output_dir.parent / "notifications"
@@ -126,17 +128,6 @@ class AgentManager:
             # Note: working_dir is used as subprocess cwd, not as a CLI flag
             cmd, mcp_config_path = self._build_command(task)
 
-            # Log the exact command for debugging
-            self.logger.info("=" * 80)
-            self.logger.info("EXECUTING COMMAND:")
-            self.logger.info(f"Working directory: {working_dir}")
-            if self.sandbox and task.allowed_directories:
-                self.logger.info("🔒 SANDBOXED EXECUTION (writes restricted)")
-                self.logger.info(f"   Allowed directories: {task.allowed_directories}")
-            self.logger.info("")
-            self.logger.info(f"Full command: {cmd}")
-            self.logger.info("=" * 80)
-
             self.logger.log_task_started(task.task_id, cmd)
 
             # Set up environment variables
@@ -198,6 +189,17 @@ class AgentManager:
 
             # Create output file path immediately
             output_file = self.output_dir / f"{task.task_id}_output.json"
+
+            # Log execution details
+            self.logger.info("=" * 80)
+            self.logger.info("EXECUTING COMMAND:")
+            self.logger.info(f"Working directory: {working_dir}")
+            if self.sandbox and task.allowed_directories:
+                self.logger.info("🔒 SANDBOXED EXECUTION (writes restricted)")
+                self.logger.info(f"   Allowed directories: {task.allowed_directories}")
+            self.logger.info("")
+            self.logger.info(f"Full command: {cmd}")
+            self.logger.info("=" * 80)
 
             # Execute with Popen to get PID immediately
             # Set working directory via cwd parameter
@@ -505,8 +507,8 @@ class AgentManager:
                         f"Failed to cleanup MCP config {mcp_config_path}: {e}"
                     )
 
-            # Cleanup scratch directory if used
-            if scratch_dir:
+            # Cleanup scratch directory if used and cleanup is enabled
+            if scratch_dir and self.cleanup_scratch:
                 try:
                     self.logger.info(f"Tearing down scratch directory: {scratch_dir}")
                     result = self.scratch_manager.teardown_scratch(
@@ -527,6 +529,8 @@ class AgentManager:
 
                 except Exception as e:
                     self.logger.error(f"Failed to teardown scratch directory {scratch_dir}: {e}")
+            elif scratch_dir:
+                self.logger.info(f"Scratch directory preserved for task resumption: {scratch_dir}")
 
     def _build_command(self, task: Task) -> tuple[str, Optional[str]]:
         """
