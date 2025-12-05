@@ -87,8 +87,13 @@ class AgentManager:
 
         start_time = time.time()
 
-        # Start file tracking
-        file_tracker = FileTracker()
+        # Create scratch directory for task isolation
+        scratch_dir = Path.home() / ".nightshift" / "worktrees" / task.task_id
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        self.logger.info(f"Created scratch directory for task {task.task_id}: {scratch_dir}")
+
+        # Start file tracking in scratch directory
+        file_tracker = FileTracker(watch_dir=str(scratch_dir))
         file_tracker.start_tracking()
 
         # Track MCP config for cleanup
@@ -96,7 +101,7 @@ class AgentManager:
 
         try:
             # Build Claude command (potentially wrapped with sandbox)
-            cmd, mcp_config_path = self._build_command(task)
+            cmd, mcp_config_path = self._build_command(task, scratch_dir=str(scratch_dir))
 
             # Log the exact command for debugging
             self.logger.info("=" * 80)
@@ -474,9 +479,22 @@ class AgentManager:
                         f"Failed to cleanup MCP config {mcp_config_path}: {e}"
                     )
 
-    def _build_command(self, task: Task) -> tuple[str, Optional[str]]:
+            # Cleanup scratch directory after task completion
+            try:
+                import shutil
+                if scratch_dir.exists():
+                    shutil.rmtree(scratch_dir)
+                    self.logger.info(f"Cleaned up scratch directory: {scratch_dir}")
+            except Exception as e:
+                self.logger.warning(f"Failed to cleanup scratch directory {scratch_dir}: {e}")
+
+    def _build_command(self, task: Task, scratch_dir: Optional[str] = None) -> tuple[str, Optional[str]]:
         """
         Build Claude CLI command from task specification.
+
+        Args:
+            task: Task object to build command for
+            scratch_dir: Optional scratch directory path for task isolation
 
         Returns:
             Tuple of (command_string, mcp_config_path)
@@ -548,26 +566,40 @@ class AgentManager:
             escaped_prompt = task.system_prompt.replace('"', '\\"')
             cmd_parts.append(f'--system-prompt "{escaped_prompt}"')
 
+        # Set working directory to scratch directory if provided
+        if scratch_dir:
+            cmd_parts.append(f'--working-directory "{scratch_dir}"')
+            self.logger.info(f"Setting working directory to scratch: {scratch_dir}")
+
         claude_cmd = " ".join(cmd_parts)
 
         # Wrap with sandbox if enabled
         if self.sandbox:
             try:
-                # If no directories specified, run in read-only mode (no write access except /tmp)
-                if not task.allowed_directories:
-                    self.logger.info(
-                        "Sandboxing task in READ-ONLY mode (no write directories specified)"
-                    )
-                    # Empty list means no write access except system temp dirs
-                    validated_dirs = []
-                else:
-                    # Validate directories before sandboxing
-                    validated_dirs = SandboxManager.validate_directories(
-                        task.allowed_directories
-                    )
+                # Build list of allowed directories including scratch directory
+                allowed_dirs = []
+
+                # Always include scratch directory if provided
+                if scratch_dir:
+                    allowed_dirs.append(scratch_dir)
+                    self.logger.info(f"Including scratch directory in sandbox: {scratch_dir}")
+
+                # Add task-specific allowed directories if specified
+                if task.allowed_directories:
+                    allowed_dirs.extend(task.allowed_directories)
+
+                # Validate directories before sandboxing
+                if allowed_dirs:
+                    validated_dirs = SandboxManager.validate_directories(allowed_dirs)
                     self.logger.info(
                         f"Sandboxing task with allowed directories: {validated_dirs}"
                     )
+                else:
+                    # If no directories specified (and no scratch dir), run in read-only mode
+                    self.logger.info(
+                        "Sandboxing task in READ-ONLY mode (no write directories specified)"
+                    )
+                    validated_dirs = []
 
                 if task.needs_git:
                     self.logger.info(
