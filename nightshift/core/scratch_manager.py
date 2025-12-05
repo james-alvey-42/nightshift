@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import json
+from datetime import datetime
 
 from .logger import NightShiftLogger
 
@@ -168,13 +169,15 @@ class ScratchManager:
                 except Exception as e:
                     self.logger.error(f"Error creating symlink {source}: {e}")
 
-        # Save scratch manifest for teardown
+        # Save scratch manifest for teardown and resumption
         manifest = {
             'task_id': task_id,
             'scratch_dir': str(scratch_dir),
+            'created_at': datetime.now().isoformat(),
             'git_repos': git_repos or [],
             'copy_paths': copy_paths or [],
-            'link_paths': link_paths or []
+            'link_paths': link_paths or [],
+            'version': '1.0'  # Manifest version for future compatibility
         }
 
         manifest_path = scratch_dir / ".nightshift_manifest.json"

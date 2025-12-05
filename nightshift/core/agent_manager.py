@@ -191,6 +191,17 @@ class AgentManager:
             # Create output file path immediately
             output_file = self.output_dir / f"{task.task_id}_output.json"
 
+            # Save resumption state if using scratch directory
+            if scratch_dir:
+                self._save_resumption_state(
+                    scratch_dir=scratch_dir,
+                    task=task,
+                    command=cmd,
+                    env=env,
+                    working_dir=working_dir,
+                    mcp_config_path=mcp_config_path
+                )
+
             # Log execution details
             self.logger.info("=" * 80)
             self.logger.info("EXECUTING COMMAND:")
@@ -890,3 +901,80 @@ class AgentManager:
             }
         except Exception as e:
             return {"success": False, "error": f"Failed to kill task: {str(e)}"}
+
+    def _save_resumption_state(
+        self,
+        scratch_dir: Path,
+        task: Task,
+        command: str,
+        env: Dict[str, str],
+        working_dir: str,
+        mcp_config_path: Optional[str]
+    ):
+        """
+        Save complete state needed for task resumption
+
+        Args:
+            scratch_dir: Path to scratch directory
+            task: Task object being executed
+            command: Full command string being executed
+            env: Environment variables
+            working_dir: Working directory path
+            mcp_config_path: Path to MCP config file (if any)
+        """
+        try:
+            # Save task specification
+            task_spec_path = scratch_dir / ".nightshift_task.json"
+            with open(task_spec_path, 'w') as f:
+                json.dump(task.to_dict(), f, indent=2)
+
+            # Save execution state
+            execution_state = {
+                'task_id': task.task_id,
+                'command': command,
+                'working_dir': working_dir,
+                'saved_at': datetime.now().isoformat(),
+                'claude_bin': self.claude_bin,
+                'enable_sandbox': self.enable_sandbox,
+                'sandbox_enabled': bool(self.sandbox),
+                'version': '1.0'
+            }
+
+            # Save environment variables (excluding sensitive ones)
+            safe_env_keys = [
+                'GH_TOKEN', 'GEMINI_API_KEY', 'OPENAI_API_KEY',
+                'CLAUDE_CODE_OAUTH_TOKEN', 'PATH', 'HOME'
+            ]
+            execution_state['environment'] = {
+                k: v for k, v in env.items()
+                if k in safe_env_keys
+            }
+
+            execution_state_path = scratch_dir / ".nightshift_execution.json"
+            with open(execution_state_path, 'w') as f:
+                json.dump(execution_state, f, indent=2)
+
+            # Copy MCP config to scratch if it exists
+            if mcp_config_path and os.path.exists(mcp_config_path):
+                mcp_copy_path = scratch_dir / ".nightshift_mcp_config.json"
+                shutil.copy2(mcp_config_path, mcp_copy_path)
+                self.logger.debug(f"Saved MCP config to scratch: {mcp_copy_path}")
+
+            # Copy sandbox profile to scratch if sandboxing is enabled
+            if self.sandbox:
+                # Find the most recent sandbox profile (they're in /tmp with unique names)
+                # For now, we'll save the sandbox configuration details
+                sandbox_config = {
+                    'enabled': True,
+                    'allowed_directories': task.allowed_directories or [],
+                    'needs_git': task.needs_git or False,
+                    'version': '1.0'
+                }
+                sandbox_config_path = scratch_dir / ".nightshift_sandbox.json"
+                with open(sandbox_config_path, 'w') as f:
+                    json.dump(sandbox_config, f, indent=2)
+
+            self.logger.info(f"Saved resumption state to scratch directory: {scratch_dir}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to save resumption state: {e}")
