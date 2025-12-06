@@ -155,9 +155,11 @@ def cli(ctx):
 @click.option('--timeout', default=900, type=int, help='Task execution timeout in seconds (default: 900 = 15 mins)')
 @click.option('--planning-timeout', default=120, type=int, help='Timeout in seconds for task planning (default: 120)')
 @click.option('--allow-dir', multiple=True, help='Additional directories to allow writes (can be specified multiple times)')
+@click.option('--no-scratch', is_flag=True, help='Disable scratch directory isolation, run in current directory')
+@click.option('--working-dir', type=str, help='Explicit working directory (disables scratch isolation)')
 @click.option('--debug', is_flag=True, help='Show full command and sandbox profile')
 @click.pass_context
-def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allow_dir, debug):
+def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allow_dir, no_scratch, working_dir, debug):
     """Submit a new task (with sandbox isolation on macOS)"""
     logger = ctx.obj['logger']
     task_queue = ctx.obj['task_queue']
@@ -182,6 +184,27 @@ def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allo
                 if abs_path not in allowed_directories:
                     allowed_directories.append(abs_path)
 
+        # Handle scratch directory overrides
+        use_scratch_final = plan.get('use_scratch', True)
+        working_directory_final = plan.get('working_directory')
+        scratch_git_repos_final = plan.get('scratch_git_repos', [])
+        scratch_copy_paths_final = plan.get('scratch_copy_paths', [])
+
+        if no_scratch:
+            # User explicitly disabled scratch isolation
+            use_scratch_final = False
+            working_directory_final = str(Path.cwd())
+            scratch_git_repos_final = []
+            scratch_copy_paths_final = []
+            console.print("[yellow]⚠ Scratch isolation disabled - running in current directory[/yellow]")
+        elif working_dir:
+            # User specified explicit working directory
+            use_scratch_final = False
+            working_directory_final = str(Path(working_dir).resolve())
+            scratch_git_repos_final = []
+            scratch_copy_paths_final = []
+            console.print(f"[yellow]⚠ Using explicit working directory: {working_directory_final}[/yellow]")
+
         # Create task in STAGED state
         task = task_queue.create_task(
             task_id=task_id,
@@ -191,10 +214,10 @@ def submit(ctx, description, auto_approve, sync, timeout, planning_timeout, allo
             needs_git=plan.get('needs_git', False),
             system_prompt=plan['system_prompt'],
             timeout_seconds=timeout,
-            use_scratch=plan.get('use_scratch', True),
-            working_directory=plan.get('working_directory'),
-            scratch_git_repos=plan.get('scratch_git_repos', []),
-            scratch_copy_paths=plan.get('scratch_copy_paths', [])
+            use_scratch=use_scratch_final,
+            working_directory=working_directory_final,
+            scratch_git_repos=scratch_git_repos_final,
+            scratch_copy_paths=scratch_copy_paths_final
         )
 
         logger.log_task_created(task_id, description)
