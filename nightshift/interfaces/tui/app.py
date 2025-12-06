@@ -46,6 +46,13 @@ def create_app() -> Application:
         mcp_config_path=mcp_config_path
     )
 
+    # Log TUI startup
+    logger.info("=" * 80)
+    logger.info("TUI: Starting NightShift TUI")
+    logger.info(f"TUI: Database: {cfg.get_database_path()}")
+    logger.info(f"TUI: Log directory: {cfg.get_log_dir()}")
+    logger.info("=" * 80)
+
     # Initialize UI state
     state = UIState()
 
@@ -53,8 +60,13 @@ def create_app() -> Application:
     controller = TUIController(state, queue, cfg, planner, agent, logger)
 
     # Load initial tasks via controller
-    controller.refresh_tasks()
-    state.message = f"Loaded {len(state.tasks)} tasks"
+    try:
+        controller.refresh_tasks()
+        state.message = f"Loaded {len(state.tasks)} tasks"
+        logger.info(f"TUI: Loaded {len(state.tasks)} tasks")
+    except Exception as e:
+        logger.error(f"TUI: Failed to load tasks: {e}")
+        state.message = f"Error loading tasks: {e}"
 
     # Create command line widget
     cmd_widget = create_command_line(state)
