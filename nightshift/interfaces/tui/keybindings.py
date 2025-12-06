@@ -24,6 +24,7 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
     """
     kb = KeyBindings()
     cmd_buffer = cmd_widget.buffer
+    logger = controller.logger  # Get logger from controller for error logging
 
     # Define mode filters once
     is_command_mode = Condition(lambda: state.command_active)
@@ -155,8 +156,73 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
         state.detail_scroll_offset = 999999
         get_app().invalidate()
 
-    # Open current content in pager
+    # Open scratch directory in terminal/finder
     @kb.add('o', filter=is_normal_mode)
+    def _(event):
+        """Open scratch directory in file explorer"""
+        def open_scratch():
+            try:
+                task = state.selected_task
+                if not task.details:
+                    state.message = "No task selected"
+                    logger.debug("TUI: Open scratch - no task selected")
+                    return
+
+                # Get scratch directory from task (if it was set during execution)
+                scratch_directory = task.details.get('scratch_directory')
+
+                if scratch_directory:
+                    scratch_path = Path(scratch_directory)
+                else:
+                    # Fallback: check if task uses scratch and build default path
+                    use_scratch = task.details.get('use_scratch', True)
+                    if not use_scratch:
+                        # Try working directory instead
+                        working_dir = task.details.get('working_directory')
+                        if working_dir:
+                            scratch_path = Path(working_dir)
+                        else:
+                            state.message = "No scratch or working directory configured"
+                            logger.debug(f"TUI: Task {task.details.get('task_id')} has no directory to open")
+                            return
+                    else:
+                        # Build scratch path from task_id (might not exist yet)
+                        task_id = task.details.get('task_id')
+                        scratch_path = Path.home() / ".nightshift" / "worktrees" / task_id
+
+                if not scratch_path.exists():
+                    state.message = f"Directory doesn't exist yet: {scratch_path}"
+                    logger.warning(f"TUI: Directory not found: {scratch_path}")
+                    return
+
+                # Try to open in file explorer or terminal
+                import platform
+                system = platform.system()
+
+                if system == "Darwin":  # macOS
+                    # Open in Finder
+                    subprocess.run(["open", str(scratch_path)], check=False)
+                    state.message = f"Opened in Finder: {scratch_path.name}"
+                    logger.info(f"TUI: Opened in Finder: {scratch_path}")
+                elif system == "Linux":
+                    # Try to open in default file manager
+                    subprocess.run(["xdg-open", str(scratch_path)], check=False)
+                    state.message = f"Opened: {scratch_path.name}"
+                    logger.info(f"TUI: Opened directory: {scratch_path}")
+                else:
+                    # Fallback: show path
+                    state.message = f"Path: {scratch_path}"
+                    logger.info(f"TUI: Directory path: {scratch_path}")
+            except Exception as e:
+                state.message = f"Error opening directory: {e}"
+                logger.error(f"TUI: Failed to open directory: {e}")
+
+            get_app().invalidate()
+
+        run_in_terminal(open_scratch)
+
+    # Open current content in pager
+    @kb.add('O', filter=is_normal_mode)
     def _(event):
         """Open current tab content in $PAGER"""
         controller.open_in_pager()
@@ -165,6 +231,7 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
     @kb.add('q', filter=is_normal_mode)
     def _(event):
         """Quit the TUI"""
+        logger.info("TUI: User quit application")
         event.app.exit()
 
     # Refresh (R key is more reliable than c-l which terminals often intercept)
@@ -235,31 +302,39 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
         then calls controller.submit_task().
         """
         def open_vim_and_submit():
-            # Create temporary file with helpful template
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-                f.write("\n\n")
-                f.write("# Describe your task above (lines starting with # are ignored)\n")
-                f.write("# Save and quit (:wq) to submit, or quit without saving (:q!) to cancel\n")
-                temp_path = f.name
+            try:
+                # Create temporary file with helpful template
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                    f.write("\n\n")
+                    f.write("# Describe your task above (lines starting with # are ignored)\n")
+                    f.write("# Save and quit (:wq) to submit, or quit without saving (:q!) to cancel\n")
+                    temp_path = f.name
 
-            # Open editor (respects $EDITOR, defaults to vim)
-            editor = os.environ.get('EDITOR', 'vim')
-            subprocess.run([editor, temp_path], check=False)
+                # Open editor (respects $EDITOR, defaults to vim)
+                editor = os.environ.get('EDITOR', 'vim')
+                logger.debug(f"TUI: Opening editor {editor} for task submission")
+                subprocess.run([editor, temp_path], check=False)
 
-            # Read the content
-            with open(temp_path, 'r') as f:
-                lines = f.readlines()
+                # Read the content
+                with open(temp_path, 'r') as f:
+                    lines = f.readlines()
 
-            # Filter out comments and empty lines
-            desc_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
-            desc = ''.join(desc_lines).strip()
+                # Filter out comments and empty lines
+                desc_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
+                desc = ''.join(desc_lines).strip()
 
-            Path(temp_path).unlink()
+                Path(temp_path).unlink()
 
-            if desc:
-                controller.submit_task(desc, auto_approve=False)
-            else:
-                state.message = "Submit cancelled: empty description"
+                if desc:
+                    logger.info(f"TUI: Submitting new task from editor: {desc[:50]}...")
+                    controller.submit_task(desc, auto_approve=False)
+                else:
+                    state.message = "Submit cancelled: empty description"
+                    logger.debug("TUI: Task submission cancelled - empty description")
+
+            except Exception as e:
+                state.message = f"Error submitting task: {e}"
+                logger.error(f"TUI: Failed to submit task from editor: {e}")
 
             get_app().invalidate()
 

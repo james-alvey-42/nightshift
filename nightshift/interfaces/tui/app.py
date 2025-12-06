@@ -3,6 +3,19 @@ TUI Application
 Main application factory and event loop management
 """
 import asyncio
+import logging
+
+# CRITICAL: Configure logging BEFORE importing any nightshift modules
+# This prevents module-level loggers from outputting to console during TUI operation
+
+# Add a NullHandler to the root logger to suppress all console output
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.CRITICAL)  # Only log critical errors
+root_logger.addHandler(logging.NullHandler())
+
+# Disable the "last resort" stderr handler that Python adds if no handlers are configured
+logging.lastResort = logging.NullHandler()
+
 from prompt_toolkit.application import Application
 from prompt_toolkit.styles import Style
 
@@ -20,6 +33,20 @@ from .controllers import TUIController
 
 def create_app() -> Application:
     """Create and configure the TUI application"""
+
+    # Double-check logging configuration to suppress console output
+    # (should already be configured at module import time, but being defensive)
+    root_logger = logging.getLogger()
+
+    # Remove any StreamHandlers that might output to console
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, logging.StreamHandler):
+            root_logger.removeHandler(handler)
+
+    # Disable propagation for all nightshift loggers to prevent console output
+    for logger_name in ['nightshift', 'nightshift.core.sandbox', 'nightshift.core.agent_manager']:
+        log = logging.getLogger(logger_name)
+        log.propagate = False
 
     # Initialize backends
     cfg = Config()
@@ -46,6 +73,13 @@ def create_app() -> Application:
         mcp_config_path=mcp_config_path
     )
 
+    # Log TUI startup
+    logger.info("=" * 80)
+    logger.info("TUI: Starting NightShift TUI")
+    logger.info(f"TUI: Database: {cfg.get_database_path()}")
+    logger.info(f"TUI: Log directory: {cfg.get_log_dir()}")
+    logger.info("=" * 80)
+
     # Initialize UI state
     state = UIState()
 
@@ -53,8 +87,13 @@ def create_app() -> Application:
     controller = TUIController(state, queue, cfg, planner, agent, logger)
 
     # Load initial tasks via controller
-    controller.refresh_tasks()
-    state.message = f"Loaded {len(state.tasks)} tasks"
+    try:
+        controller.refresh_tasks()
+        state.message = f"Loaded {len(state.tasks)} tasks"
+        logger.info(f"TUI: Loaded {len(state.tasks)} tasks")
+    except Exception as e:
+        logger.error(f"TUI: Failed to load tasks: {e}")
+        state.message = f"Error loading tasks: {e}"
 
     # Create command line widget
     cmd_widget = create_command_line(state)

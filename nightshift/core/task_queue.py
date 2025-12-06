@@ -35,6 +35,11 @@ class Task:
     needs_git: Optional[bool] = None  # Enable device file access for git operations
     system_prompt: Optional[str] = None
     timeout_seconds: Optional[int] = None  # Execution timeout (default: 900 = 15 mins)
+    use_scratch: Optional[bool] = None  # Use isolated scratch directory (default: True)
+    working_directory: Optional[str] = None  # Explicit working directory (overrides scratch if set)
+    scratch_directory: Optional[str] = None  # Actual scratch directory path (set during execution)
+    scratch_git_repos: Optional[List[Dict[str, str]]] = None  # Git repos to clone into scratch
+    scratch_copy_paths: Optional[List[Dict[str, str]]] = None  # Paths to copy into scratch
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     started_at: Optional[str] = None
@@ -112,6 +117,11 @@ class TaskQueue:
                     needs_git INTEGER,  -- Boolean: enable device files for git
                     system_prompt TEXT,
                     timeout_seconds INTEGER DEFAULT 900,  -- Execution timeout (default: 15 mins)
+                    use_scratch INTEGER DEFAULT 1,  -- Boolean: use isolated scratch directory (default: True)
+                    working_directory TEXT,  -- Explicit working directory
+                    scratch_directory TEXT,  -- Actual scratch directory path (set during execution)
+                    scratch_git_repos TEXT,  -- JSON array of git repos to clone
+                    scratch_copy_paths TEXT,  -- JSON array of paths to copy
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     started_at TEXT,
@@ -142,6 +152,27 @@ class TaskQueue:
                 conn.execute("ALTER TABLE tasks ADD COLUMN timeout_seconds INTEGER DEFAULT 900")
                 conn.commit()
 
+            # Migration: Add scratch directory columns
+            if 'use_scratch' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN use_scratch INTEGER DEFAULT 1")
+                conn.commit()
+
+            if 'working_directory' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN working_directory TEXT")
+                conn.commit()
+
+            if 'scratch_git_repos' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN scratch_git_repos TEXT")
+                conn.commit()
+
+            if 'scratch_copy_paths' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN scratch_copy_paths TEXT")
+                conn.commit()
+
+            if 'scratch_directory' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN scratch_directory TEXT")
+                conn.commit()
+
             # Note: SQLite doesn't support DROP COLUMN easily, so we leave estimated_time if it exists
             # New code will use timeout_seconds instead
 
@@ -167,7 +198,11 @@ class TaskQueue:
         allowed_directories: Optional[List[str]] = None,
         needs_git: Optional[bool] = None,
         system_prompt: Optional[str] = None,
-        timeout_seconds: Optional[int] = 900  # Default 15 minutes
+        timeout_seconds: Optional[int] = 900,  # Default 15 minutes
+        use_scratch: Optional[bool] = True,  # Default to using scratch directory
+        working_directory: Optional[str] = None,
+        scratch_git_repos: Optional[List[Dict[str, str]]] = None,
+        scratch_copy_paths: Optional[List[Dict[str, str]]] = None
     ) -> Task:
         """Create a new task in STAGED state"""
         now = datetime.now().isoformat()
@@ -182,6 +217,10 @@ class TaskQueue:
             needs_git=needs_git,
             system_prompt=system_prompt,
             timeout_seconds=timeout_seconds,
+            use_scratch=use_scratch,
+            working_directory=working_directory,
+            scratch_git_repos=scratch_git_repos,
+            scratch_copy_paths=scratch_copy_paths,
             created_at=now,
             updated_at=now
         )
@@ -191,8 +230,9 @@ class TaskQueue:
                 INSERT INTO tasks (
                     task_id, description, status, skill_name, allowed_tools,
                     allowed_directories, needs_git, system_prompt, timeout_seconds,
+                    use_scratch, working_directory, scratch_directory, scratch_git_repos, scratch_copy_paths,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
                 task.description,
@@ -203,6 +243,11 @@ class TaskQueue:
                 1 if task.needs_git else 0,
                 task.system_prompt,
                 task.timeout_seconds,
+                1 if task.use_scratch else 0,
+                task.working_directory,
+                task.scratch_directory,
+                json.dumps(task.scratch_git_repos) if task.scratch_git_repos else None,
+                json.dumps(task.scratch_copy_paths) if task.scratch_copy_paths else None,
                 task.created_at,
                 task.updated_at
             ))
@@ -230,6 +275,13 @@ class TaskQueue:
             if timeout_val is None:
                 timeout_val = 900  # Default 15 minutes
 
+            # Handle new scratch directory fields with backwards compatibility
+            use_scratch = bool(row["use_scratch"]) if "use_scratch" in row.keys() and row["use_scratch"] is not None else True
+            working_directory = row["working_directory"] if "working_directory" in row.keys() else None
+            scratch_directory = row["scratch_directory"] if "scratch_directory" in row.keys() else None
+            scratch_git_repos = json.loads(row["scratch_git_repos"]) if "scratch_git_repos" in row.keys() and row["scratch_git_repos"] else None
+            scratch_copy_paths = json.loads(row["scratch_copy_paths"]) if "scratch_copy_paths" in row.keys() and row["scratch_copy_paths"] else None
+
             return Task(
                 task_id=row["task_id"],
                 description=row["description"],
@@ -240,6 +292,11 @@ class TaskQueue:
                 needs_git=bool(row["needs_git"]) if row["needs_git"] is not None else None,
                 system_prompt=row["system_prompt"],
                 timeout_seconds=timeout_val,
+                use_scratch=use_scratch,
+                working_directory=working_directory,
+                scratch_directory=scratch_directory,
+                scratch_git_repos=scratch_git_repos,
+                scratch_copy_paths=scratch_copy_paths,
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 started_at=row["started_at"],
@@ -275,6 +332,13 @@ class TaskQueue:
                 if timeout_val is None:
                     timeout_val = 900  # Default 15 minutes
 
+                # Handle new scratch directory fields with backwards compatibility
+                use_scratch = bool(row["use_scratch"]) if "use_scratch" in row.keys() and row["use_scratch"] is not None else True
+                working_directory = row["working_directory"] if "working_directory" in row.keys() else None
+                scratch_directory = row["scratch_directory"] if "scratch_directory" in row.keys() else None
+                scratch_git_repos = json.loads(row["scratch_git_repos"]) if "scratch_git_repos" in row.keys() and row["scratch_git_repos"] else None
+                scratch_copy_paths = json.loads(row["scratch_copy_paths"]) if "scratch_copy_paths" in row.keys() and row["scratch_copy_paths"] else None
+
                 tasks.append(Task(
                     task_id=row["task_id"],
                     description=row["description"],
@@ -285,6 +349,11 @@ class TaskQueue:
                     needs_git=bool(row["needs_git"]) if row["needs_git"] is not None else None,
                     system_prompt=row["system_prompt"],
                     timeout_seconds=timeout_val,
+                    use_scratch=use_scratch,
+                    working_directory=working_directory,
+                    scratch_directory=scratch_directory,
+                    scratch_git_repos=scratch_git_repos,
+                    scratch_copy_paths=scratch_copy_paths,
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     started_at=row["started_at"],
@@ -329,7 +398,7 @@ class TaskQueue:
 
         # Add any additional fields from kwargs
         for key, value in kwargs.items():
-            if key in ["result_path", "error_message", "token_usage", "execution_time", "process_id"]:
+            if key in ["result_path", "error_message", "token_usage", "execution_time", "process_id", "scratch_directory"]:
                 update_fields.append(f"{key} = ?")
                 values.append(value)
 

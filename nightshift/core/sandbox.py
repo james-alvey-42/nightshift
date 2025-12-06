@@ -174,7 +174,7 @@ class SandboxManager:
         allowed_directories: List[str],
         profile_name: Optional[str] = None,
         needs_git: bool = False
-    ) -> str:
+    ) -> tuple[str, str]:
         """
         Wrap a command with sandbox-exec
 
@@ -185,7 +185,7 @@ class SandboxManager:
             needs_git: If True, allows access to device files needed for git
 
         Returns:
-            The wrapped command string with sandbox-exec
+            Tuple of (wrapped_command, profile_path)
         """
         profile_path = self.create_profile(allowed_directories, profile_name, needs_git)
 
@@ -195,7 +195,7 @@ class SandboxManager:
         logger.info(f"🔒 Sandbox profile: {profile_path}")
         logger.debug(f"Wrapped command: {wrapped}")
 
-        return wrapped
+        return wrapped, profile_path
 
     def cleanup(self):
         """Remove all temporary profile files"""

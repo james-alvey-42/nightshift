@@ -159,14 +159,48 @@ class DetailControl(FormattedTextControl):
                 for tool in st.details['allowed_tools']:
                     lines.append(("", f"  • {tool}\n"))
 
+            # Scratch directory info
+            use_scratch = st.details.get('use_scratch', True)
+            working_directory = st.details.get('working_directory')
+            scratch_git_repos = st.details.get('scratch_git_repos', [])
+            scratch_copy_paths = st.details.get('scratch_copy_paths', [])
+
+            if use_scratch:
+                lines.append(("", f"\n🗂️  Scratch Directory:\n"))
+
+                # Show scratch directory path if available (task is running/completed)
+                scratch_directory = st.details.get('scratch_directory')
+                if scratch_directory:
+                    # Show just the directory name, not the full path
+                    from pathlib import Path
+                    scratch_name = Path(scratch_directory).name
+                    lines.append(("cyan", f"  {scratch_name}/\n"))
+                    lines.append(("class:dim", f"  Press 'o' to open in Finder\n"))
+                else:
+                    lines.append(("cyan", f"  Enabled (will be created during execution)\n"))
+
+                if scratch_git_repos:
+                    lines.append(("", f"  Git repos to clone:\n"))
+                    for repo in scratch_git_repos:
+                        lines.append(("class:dim", f"    • {repo.get('source', 'N/A')}\n"))
+                if scratch_copy_paths:
+                    lines.append(("", f"  Files/dirs to copy:\n"))
+                    for path in scratch_copy_paths:
+                        lines.append(("class:dim", f"    • {path.get('source', 'N/A')}\n"))
+            elif working_directory:
+                lines.append(("", f"\n📁 Working Directory:\n"))
+                lines.append(("yellow", f"  {working_directory}\n"))
+                lines.append(("class:dim", f"  (scratch disabled)\n"))
+
             # Allowed directories (sandbox)
             allowed_dirs = st.details.get('allowed_directories', [])
             needs_git = st.details.get('needs_git', False)
             if allowed_dirs or needs_git:
-                lines.append(("", f"\nSandbox (write access):\n"))
+                lines.append(("", f"\n🔒 Sandbox (write access):\n"))
                 for d in allowed_dirs:
                     lines.append(("", f"  • {d}\n"))
-                lines.append(("", f"(needs_git: {needs_git})\n"))
+                if needs_git:
+                    lines.append(("class:dim", f"  (git/gh access enabled)\n"))
 
             # Error message
             if st.details.get('error_message'):
@@ -181,6 +215,50 @@ class DetailControl(FormattedTextControl):
 
         elif tab == "exec":
             lines.append(("class:heading", "📋 Execution Log\n\n"))
+
+            # Show execution context
+            use_scratch = st.details.get('use_scratch', True)
+            working_dir = st.details.get('working_directory')
+
+            if use_scratch and st.details.get('status') in ['RUNNING', 'COMPLETED', 'FAILED']:
+                scratch_path = f"~/.nightshift/worktrees/{st.task_id}/"
+                lines.append(("", "🗂️  Working Directory: "))
+                lines.append(("cyan", f"{scratch_path}\n"))
+                lines.append(("class:dim", "  (isolated scratch directory)\n\n"))
+            elif working_dir:
+                lines.append(("", "📁 Working Directory: "))
+                lines.append(("yellow", f"{working_dir}\n\n"))
+
+            # Show command trace from saved state if available
+            from pathlib import Path
+            import json
+            if use_scratch and st.details.get('status') in ['RUNNING', 'COMPLETED', 'FAILED']:
+                try:
+                    scratch_dir = Path.home() / ".nightshift" / "worktrees" / st.task_id
+                    exec_state_path = scratch_dir / ".nightshift_execution.json"
+                    if exec_state_path.exists():
+                        with open(exec_state_path) as f:
+                            exec_state = json.load(f)
+
+                        lines.append(("", "💻 Command Executed:\n"))
+                        # Truncate very long commands
+                        cmd = exec_state.get('command', 'N/A')
+                        if len(cmd) > 200:
+                            cmd = cmd[:200] + "..."
+                        lines.append(("class:dim", f"{cmd}\n\n"))
+
+                        lines.append(("", "⚙️  Claude Binary: "))
+                        lines.append(("class:dim", f"{exec_state.get('claude_bin', 'N/A')}\n"))
+
+                        if exec_state.get('sandbox_enabled'):
+                            lines.append(("", "🔒 Sandbox: "))
+                            lines.append(("cyan", "Enabled\n\n"))
+                        else:
+                            lines.append(("class:dim", "🔒 Sandbox: Disabled\n\n"))
+                except Exception:
+                    pass  # Silently skip if can't read execution state
+
+            lines.append(("class:heading", "Output:\n\n"))
             if st.exec_snippet:
                 # Parse and colorize execution log
                 for line in st.exec_snippet.split("\n"):
@@ -352,7 +430,7 @@ class StatusBarControl(FormattedTextControl):
         """Generate formatted text for status bar with scroll indicators"""
         mode = "COMMAND" if self.state.command_active else "NORMAL"
         msg = self.state.busy_label or self.state.message or ""
-        hints = "j/k:nav h/l:tabs a:approve r:review c:cancel d:delete s:submit ^d/^u:scroll o:pager q:quit"
+        hints = "j/k:nav h/l:tabs a:approve r:review c:cancel d:delete s:submit ^d/^u:scroll o:open O:pager q:quit"
 
         # Get scroll info from state (set by DetailControl during render)
         scroll_info = ""

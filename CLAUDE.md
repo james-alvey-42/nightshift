@@ -143,15 +143,19 @@ NightShift uses a two-agent architecture where both agents are Claude Code insta
 **Responsibilities:**
 - Analyzes task description and selects appropriate MCP tools
 - Determines sandbox permissions (which directories need write access)
+- Determines scratch directory requirements (git repos and files to include)
 - Generates enhanced prompt for executor
 - Estimates token usage and execution time
 - Sets `needs_git` flag for tasks requiring git/gh CLI access
+- Sets `use_scratch` flag and populates `scratch_git_repos`/`scratch_copy_paths` for resource provisioning
 
 **Key Logic:**
 - Reads available tools from `nightshift/config/claude-code-tools-reference.md`
 - Uses JSON schema validation to enforce structured output
-- Parses response handling both direct JSON and markdown-wrapped format (task_planner.py:137-150)
-- Defaults to current working directory for sandbox permissions when uncertain
+- Parses response handling both direct JSON and markdown-wrapped format
+- Intelligently determines what resources (git repos, files) task needs access to
+- Defaults to using scratch directory with current repo for git-related tasks
+- Can opt-out of scratch via `use_scratch: false` for simple tasks
 
 ### 2. Executor Agent (nightshift/core/agent_manager.py)
 Executes approved tasks with restricted tool access and optional sandboxing. Invoked as:
@@ -185,17 +189,27 @@ claude -p "<task>" --output-format stream-json --verbose --allowed-tools <tools>
 - Stores task metadata: description, allowed_tools, allowed_directories, needs_git, process_id
 - Database schema includes migrations for new columns
 
+**ScratchManager** (nightshift/core/scratch_manager.py)
+- Manages isolated scratch directories for task execution
+- **Setup Phase**: Clones git repos (using `git clone --shared`), copies files/directories, creates symlinks
+- **Teardown Phase**: Detects modified files, copies them back to original locations, fetches new commits to source repo
+- Git commits created in scratch are fetched to source repo on `nightshift-scratch` branch (not auto-merged)
+- Each task gets its own workspace in `~/.nightshift/worktrees/task_ID/`
+- Enables concurrent tasks on the same repository without conflicts
+- Configurable via `use_scratch`, `working_directory`, `scratch_git_repos`, and `scratch_copy_paths` task fields
+
 **SandboxManager** (nightshift/core/sandbox.py)
 - macOS-only sandboxing using `sandbox-exec` with `.sb` profiles
 - Generates profiles that deny all writes except to allowed_directories
 - Always permits: /tmp, ~/.claude/, MCP credential files
 - When `needs_git=true`: also permits /dev/null, /dev/tty, ~/.config/gh/
 - Profiles enforce least-privilege: read-all, execute-all, network-all, write-restricted
+- Works seamlessly with scratch directories (scratch dir automatically added to allowed writes)
 
 **FileTracker** (nightshift/core/file_tracker.py)
 - Takes SHA-256 hash snapshots before/after execution
 - Detects created/modified/deleted files
-- Only tracks changes within working directory (not system-wide)
+- Tracks changes within working directory (scratch or explicit working dir)
 
 **Notifier** (nightshift/core/notifier.py)
 - Generates completion notifications with task summary
@@ -258,6 +272,41 @@ The TUI (nightshift/interfaces/tui/) uses prompt_toolkit and follows a clear sep
 - `NIGHTSHIFT_POLL_INTERVAL`: Polling interval in seconds (default: 1.0)
 - `NIGHTSHIFT_AUTO_EXECUTOR`: Auto-start executor with Slack server (default: true)
 
+### Scratch Directory Workflow
+
+**Default Behavior (Scratch Isolation Enabled):**
+
+1. **Planning Phase**: Task planner analyzes the task and determines:
+   - Which git repositories need to be cloned
+   - Which files/directories need to be copied
+   - Whether scratch isolation is needed (`use_scratch: true` by default)
+
+2. **Setup Phase**: ScratchManager creates isolated workspace:
+   - Creates `~/.nightshift/worktrees/task_XXX/`
+   - Clones git repos using `git clone --shared` (efficient, reuses objects)
+   - Copies specified files/directories
+   - Creates symlinks for read-only resources
+
+3. **Execution Phase**: Task runs in scratch directory:
+   - Claude CLI invoked with `--working-directory /path/to/scratch`
+   - All file modifications happen in isolation
+   - Original repos/files remain untouched
+   - Multiple concurrent tasks can work on same repo safely
+
+4. **Teardown Phase**: ScratchManager copies results back:
+   - Detects modified files in scratch
+   - Copies them back to original locations
+   - For git repos: fetches new commits to source repo on `nightshift-scratch` branch
+   - User can review and merge manually: `git merge nightshift-scratch`
+   - Cleans up scratch directory
+
+**Alternative: Explicit Working Directory:**
+
+Task planner can set `use_scratch: false` and specify `working_directory` for tasks that:
+- Don't need isolation (e.g., read-only analysis)
+- Work with external directories
+- Have simple, non-conflicting operations
+
 ### Data Storage
 
 All data lives in `~/.nightshift/`:
@@ -268,6 +317,7 @@ All data lives in `~/.nightshift/`:
 - `notifications/task_XXX_notification.json` - Completion summaries
 - `config/slack_config.json` - Slack credentials (for Slack integration)
 - `slack_metadata/task_XXX_slack.json` - Slack context (channel, user, thread)
+- `worktrees/task_XXX/` - Scratch directories (temporary, cleaned after task)
 
 ### Claude CLI Integration
 

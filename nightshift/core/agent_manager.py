@@ -9,6 +9,7 @@ import time
 import os
 import signal
 import fcntl
+import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -19,6 +20,7 @@ from .file_tracker import FileTracker
 from .notifier import Notifier
 from .sandbox import SandboxManager
 from .mcp_config_manager import MCPConfigManager
+from .scratch_manager import ScratchManager
 
 
 class AgentManager:
@@ -34,6 +36,7 @@ class AgentManager:
         enable_sandbox: bool = True,
         enable_terminal_notifications: bool = True,
         mcp_config_path: Optional[str] = None,
+        cleanup_scratch: bool = False,  # Don't cleanup scratch for task resumption
     ):
         self.task_queue = task_queue
         self.logger = logger
@@ -42,6 +45,7 @@ class AgentManager:
         self.claude_bin = claude_bin
         self.enable_notifications = enable_notifications
         self.enable_sandbox = enable_sandbox
+        self.cleanup_scratch = cleanup_scratch
 
         # Notifier uses notifications directory next to output
         notifications_dir = self.output_dir.parent / "notifications"
@@ -70,6 +74,9 @@ class AgentManager:
             base_config_path=mcp_config_path, logger=logger
         )
 
+        # Scratch manager for isolated task execution
+        self.scratch_manager = ScratchManager(logger=logger)
+
     def execute_task(self, task: Task, timeout: Optional[int] = None) -> Dict[str, Any]:
         """
         Execute a task using Claude headless mode
@@ -87,26 +94,42 @@ class AgentManager:
 
         start_time = time.time()
 
-        # Start file tracking
-        file_tracker = FileTracker()
+        # Determine working directory based on task configuration
+        scratch_dir = None
+        working_dir = None
+
+        if task.use_scratch:
+            # Create isolated scratch directory with task resources
+            self.logger.info(f"Setting up scratch directory for task {task.task_id}")
+            scratch_dir = self.scratch_manager.create_scratch(
+                task_id=task.task_id,
+                git_repos=task.scratch_git_repos,
+                copy_paths=task.scratch_copy_paths
+            )
+            working_dir = str(scratch_dir)
+            self.logger.info(f"Scratch directory ready: {scratch_dir}")
+        elif task.working_directory:
+            # Use explicitly specified working directory
+            working_dir = task.working_directory
+            self.logger.info(f"Using specified working directory: {working_dir}")
+        else:
+            # Use current working directory
+            working_dir = str(Path.cwd())
+            self.logger.info(f"Using current working directory: {working_dir}")
+
+        # Start file tracking in working directory
+        file_tracker = FileTracker(watch_dir=working_dir)
         file_tracker.start_tracking()
 
-        # Track MCP config for cleanup
+        # Track MCP config and sandbox profile for cleanup/copying
         mcp_config_path = None
+        sandbox_profile_path = None
 
         try:
             # Build Claude command (potentially wrapped with sandbox)
-            cmd, mcp_config_path = self._build_command(task)
-
-            # Log the exact command for debugging
-            self.logger.info("=" * 80)
-            self.logger.info("EXECUTING COMMAND:")
-            if self.sandbox and task.allowed_directories:
-                self.logger.info("🔒 SANDBOXED EXECUTION (writes restricted)")
-                self.logger.info(f"   Allowed directories: {task.allowed_directories}")
-            self.logger.info("")
-            self.logger.info(f"Full command: {cmd}")
-            self.logger.info("=" * 80)
+            # Note: working_dir is used as subprocess cwd, not as a CLI flag
+            # Pass working_dir to sandbox manager for proper write permissions
+            cmd, mcp_config_path, sandbox_profile_path = self._build_command(task, working_dir)
 
             self.logger.log_task_started(task.task_id, cmd)
 
@@ -170,7 +193,31 @@ class AgentManager:
             # Create output file path immediately
             output_file = self.output_dir / f"{task.task_id}_output.json"
 
+            # Save resumption state if using scratch directory
+            if scratch_dir:
+                self._save_resumption_state(
+                    scratch_dir=scratch_dir,
+                    task=task,
+                    command=cmd,
+                    env=env,
+                    working_dir=working_dir,
+                    mcp_config_path=mcp_config_path,
+                    sandbox_profile_path=sandbox_profile_path
+                )
+
+            # Log execution details
+            self.logger.info("=" * 80)
+            self.logger.info("EXECUTING COMMAND:")
+            self.logger.info(f"Working directory: {working_dir}")
+            if self.sandbox and task.allowed_directories:
+                self.logger.info("🔒 SANDBOXED EXECUTION (writes restricted)")
+                self.logger.info(f"   Allowed directories: {task.allowed_directories}")
+            self.logger.info("")
+            self.logger.info(f"Full command: {cmd}")
+            self.logger.info("=" * 80)
+
             # Execute with Popen to get PID immediately
+            # Set working directory via cwd parameter
             process = subprocess.Popen(
                 cmd,
                 shell=True,
@@ -178,14 +225,21 @@ class AgentManager:
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
+                cwd=working_dir  # Change to working directory (scratch or explicit)
             )
 
-            # Store PID and result path in task metadata immediately
+            # Store PID, result path, and scratch directory in task metadata immediately
+            update_kwargs = {
+                "process_id": process.pid,
+                "result_path": str(output_file),
+            }
+            if scratch_dir:
+                update_kwargs["scratch_directory"] = str(scratch_dir)
+
             self.task_queue.update_status(
                 task.task_id,
                 TaskStatus.RUNNING,
-                process_id=process.pid,
-                result_path=str(output_file),
+                **update_kwargs
             )
             self.logger.info(f"Task {task.task_id} executing with PID: {process.pid}")
 
@@ -474,13 +528,45 @@ class AgentManager:
                         f"Failed to cleanup MCP config {mcp_config_path}: {e}"
                     )
 
-    def _build_command(self, task: Task) -> tuple[str, Optional[str]]:
+            # Cleanup scratch directory if used and cleanup is enabled
+            if scratch_dir and self.cleanup_scratch:
+                try:
+                    self.logger.info(f"Tearing down scratch directory: {scratch_dir}")
+                    result = self.scratch_manager.teardown_scratch(
+                        scratch_dir=scratch_dir,
+                        copy_back=True,  # Copy modified files back to original locations
+                        keep_scratch=False  # Clean up scratch after copying
+                    )
+
+                    if result['copied_files']:
+                        self.logger.info(f"Copied {len(result['copied_files'])} files back from scratch")
+                        for file in result['copied_files'][:10]:  # Log first 10
+                            self.logger.debug(f"  - {file}")
+
+                    if result['errors']:
+                        self.logger.warning(f"Scratch teardown had {len(result['errors'])} errors")
+                        for error in result['errors'][:5]:  # Log first 5 errors
+                            self.logger.warning(f"  - {error}")
+
+                except Exception as e:
+                    self.logger.error(f"Failed to teardown scratch directory {scratch_dir}: {e}")
+            elif scratch_dir:
+                self.logger.info(f"Scratch directory preserved for task resumption: {scratch_dir}")
+
+    def _build_command(self, task: Task, working_dir: Optional[str] = None) -> tuple[str, Optional[str], Optional[str]]:
         """
         Build Claude CLI command from task specification.
 
+        Args:
+            task: Task object to build command for
+            working_dir: Working directory path (needed for sandbox permissions)
+
         Returns:
-            Tuple of (command_string, mcp_config_path)
-            mcp_config_path is returned for cleanup after execution
+            Tuple of (command_string, mcp_config_path, sandbox_profile_path)
+            mcp_config_path and sandbox_profile_path are returned for cleanup/copying after execution
+
+        Note:
+            Working directory is set via subprocess cwd parameter, not CLI flag
         """
         cmd_parts = [self.claude_bin, "-p"]
 
@@ -551,41 +637,53 @@ class AgentManager:
         claude_cmd = " ".join(cmd_parts)
 
         # Wrap with sandbox if enabled
+        sandbox_profile_path = None
         if self.sandbox:
             try:
-                # If no directories specified, run in read-only mode (no write access except /tmp)
-                if not task.allowed_directories:
-                    self.logger.info(
-                        "Sandboxing task in READ-ONLY mode (no write directories specified)"
-                    )
-                    # Empty list means no write access except system temp dirs
-                    validated_dirs = []
-                else:
-                    # Validate directories before sandboxing
-                    validated_dirs = SandboxManager.validate_directories(
-                        task.allowed_directories
-                    )
+                # Build list of allowed directories
+                allowed_dirs = []
+
+                # Include working directory if it should be writable
+                # (scratch directories are always writable, explicit working_dir may or may not be)
+                if task.use_scratch and working_dir:
+                    # Scratch directory should always be writable
+                    allowed_dirs.append(working_dir)
+                    self.logger.info(f"Including scratch working directory in sandbox: {working_dir}")
+
+                # Add task-specific allowed directories if specified
+                if task.allowed_directories:
+                    allowed_dirs.extend(task.allowed_directories)
+
+                # Validate directories before sandboxing
+                if allowed_dirs:
+                    validated_dirs = SandboxManager.validate_directories(allowed_dirs)
                     self.logger.info(
                         f"Sandboxing task with allowed directories: {validated_dirs}"
                     )
+                else:
+                    # If no directories specified, run in read-only mode
+                    self.logger.info(
+                        "Sandboxing task in READ-ONLY mode (no write directories specified)"
+                    )
+                    validated_dirs = []
 
                 if task.needs_git:
                     self.logger.info(
                         "Git operations enabled - allowing device file access"
                     )
 
-                sandboxed_cmd = self.sandbox.wrap_command(
+                sandboxed_cmd, sandbox_profile_path = self.sandbox.wrap_command(
                     claude_cmd,
                     validated_dirs,
                     profile_name=task.task_id,
                     needs_git=bool(task.needs_git),
                 )
-                return sandboxed_cmd, mcp_config_path
+                return sandboxed_cmd, mcp_config_path, sandbox_profile_path
             except ValueError as e:
                 self.logger.error(f"Sandbox validation failed: {e}")
                 raise
 
-        return claude_cmd, mcp_config_path
+        return claude_cmd, mcp_config_path, sandbox_profile_path
 
     def _parse_output(self, stdout: str, stderr: str) -> Dict[str, Any]:
         """
@@ -813,3 +911,87 @@ class AgentManager:
             }
         except Exception as e:
             return {"success": False, "error": f"Failed to kill task: {str(e)}"}
+
+    def _save_resumption_state(
+        self,
+        scratch_dir: Path,
+        task: Task,
+        command: str,
+        env: Dict[str, str],
+        working_dir: str,
+        mcp_config_path: Optional[str],
+        sandbox_profile_path: Optional[str]
+    ):
+        """
+        Save complete state needed for task resumption
+
+        Args:
+            scratch_dir: Path to scratch directory
+            task: Task object being executed
+            command: Full command string being executed
+            env: Environment variables
+            working_dir: Working directory path
+            mcp_config_path: Path to MCP config file (if any)
+            sandbox_profile_path: Path to sandbox profile file (if any)
+        """
+        try:
+            # Save task specification
+            task_spec_path = scratch_dir / ".nightshift_task.json"
+            with open(task_spec_path, 'w') as f:
+                json.dump(task.to_dict(), f, indent=2)
+
+            # Save execution state
+            execution_state = {
+                'task_id': task.task_id,
+                'command': command,
+                'working_dir': working_dir,
+                'saved_at': datetime.now().isoformat(),
+                'claude_bin': self.claude_bin,
+                'enable_sandbox': self.enable_sandbox,
+                'sandbox_enabled': bool(self.sandbox),
+                'version': '1.0'
+            }
+
+            # Save environment variables (excluding sensitive ones)
+            safe_env_keys = [
+                'GH_TOKEN', 'GEMINI_API_KEY', 'OPENAI_API_KEY',
+                'CLAUDE_CODE_OAUTH_TOKEN', 'PATH', 'HOME'
+            ]
+            execution_state['environment'] = {
+                k: v for k, v in env.items()
+                if k in safe_env_keys
+            }
+
+            execution_state_path = scratch_dir / ".nightshift_execution.json"
+            with open(execution_state_path, 'w') as f:
+                json.dump(execution_state, f, indent=2)
+
+            # Copy MCP config to scratch if it exists
+            if mcp_config_path and os.path.exists(mcp_config_path):
+                mcp_copy_path = scratch_dir / ".nightshift_mcp_config.json"
+                shutil.copy2(mcp_config_path, mcp_copy_path)
+                self.logger.debug(f"Saved MCP config to scratch: {mcp_copy_path}")
+
+            # Copy sandbox profile to scratch if sandboxing is enabled
+            if sandbox_profile_path and os.path.exists(sandbox_profile_path):
+                # Copy the actual .sb profile file
+                sandbox_profile_copy = scratch_dir / ".nightshift_sandbox.sb"
+                shutil.copy2(sandbox_profile_path, sandbox_profile_copy)
+                self.logger.debug(f"Saved sandbox profile to scratch: {sandbox_profile_copy}")
+
+                # Also save sandbox configuration metadata
+                sandbox_config = {
+                    'enabled': True,
+                    'profile_path': str(sandbox_profile_copy),
+                    'allowed_directories': task.allowed_directories or [],
+                    'needs_git': task.needs_git or False,
+                    'version': '1.0'
+                }
+                sandbox_config_path = scratch_dir / ".nightshift_sandbox.json"
+                with open(sandbox_config_path, 'w') as f:
+                    json.dump(sandbox_config, f, indent=2)
+
+            self.logger.info(f"Saved resumption state to scratch directory: {scratch_dir}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to save resumption state: {e}")

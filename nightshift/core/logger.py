@@ -15,10 +15,16 @@ class NightShiftLogger:
     def __init__(self, log_dir: str = "logs", console_output: bool = True):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.console_output = console_output
 
         # Set up Python logging
-        self.logger = logging.getLogger("nightshift")
+        # Use unique logger name for TUI mode to avoid handler conflicts
+        logger_name = "nightshift" if console_output else "nightshift.tui"
+        self.logger = logging.getLogger(logger_name)
         self.logger.setLevel(logging.DEBUG)
+
+        # Prevent propagation to avoid parent logger handlers
+        self.logger.propagate = False
 
         # Clear any existing handlers to prevent duplicates
         self.logger.handlers.clear()
