@@ -9,6 +9,7 @@ import time
 import os
 import signal
 import fcntl
+import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -120,14 +121,15 @@ class AgentManager:
         file_tracker = FileTracker(watch_dir=working_dir)
         file_tracker.start_tracking()
 
-        # Track MCP config for cleanup
+        # Track MCP config and sandbox profile for cleanup/copying
         mcp_config_path = None
+        sandbox_profile_path = None
 
         try:
             # Build Claude command (potentially wrapped with sandbox)
             # Note: working_dir is used as subprocess cwd, not as a CLI flag
             # Pass working_dir to sandbox manager for proper write permissions
-            cmd, mcp_config_path = self._build_command(task, working_dir)
+            cmd, mcp_config_path, sandbox_profile_path = self._build_command(task, working_dir)
 
             self.logger.log_task_started(task.task_id, cmd)
 
@@ -199,7 +201,8 @@ class AgentManager:
                     command=cmd,
                     env=env,
                     working_dir=working_dir,
-                    mcp_config_path=mcp_config_path
+                    mcp_config_path=mcp_config_path,
+                    sandbox_profile_path=sandbox_profile_path
                 )
 
             # Log execution details
@@ -225,12 +228,18 @@ class AgentManager:
                 cwd=working_dir  # Change to working directory (scratch or explicit)
             )
 
-            # Store PID and result path in task metadata immediately
+            # Store PID, result path, and scratch directory in task metadata immediately
+            update_kwargs = {
+                "process_id": process.pid,
+                "result_path": str(output_file),
+            }
+            if scratch_dir:
+                update_kwargs["scratch_directory"] = str(scratch_dir)
+
             self.task_queue.update_status(
                 task.task_id,
                 TaskStatus.RUNNING,
-                process_id=process.pid,
-                result_path=str(output_file),
+                **update_kwargs
             )
             self.logger.info(f"Task {task.task_id} executing with PID: {process.pid}")
 
@@ -544,7 +553,7 @@ class AgentManager:
             elif scratch_dir:
                 self.logger.info(f"Scratch directory preserved for task resumption: {scratch_dir}")
 
-    def _build_command(self, task: Task, working_dir: Optional[str] = None) -> tuple[str, Optional[str]]:
+    def _build_command(self, task: Task, working_dir: Optional[str] = None) -> tuple[str, Optional[str], Optional[str]]:
         """
         Build Claude CLI command from task specification.
 
@@ -553,8 +562,8 @@ class AgentManager:
             working_dir: Working directory path (needed for sandbox permissions)
 
         Returns:
-            Tuple of (command_string, mcp_config_path)
-            mcp_config_path is returned for cleanup after execution
+            Tuple of (command_string, mcp_config_path, sandbox_profile_path)
+            mcp_config_path and sandbox_profile_path are returned for cleanup/copying after execution
 
         Note:
             Working directory is set via subprocess cwd parameter, not CLI flag
@@ -628,6 +637,7 @@ class AgentManager:
         claude_cmd = " ".join(cmd_parts)
 
         # Wrap with sandbox if enabled
+        sandbox_profile_path = None
         if self.sandbox:
             try:
                 # Build list of allowed directories
@@ -662,18 +672,18 @@ class AgentManager:
                         "Git operations enabled - allowing device file access"
                     )
 
-                sandboxed_cmd = self.sandbox.wrap_command(
+                sandboxed_cmd, sandbox_profile_path = self.sandbox.wrap_command(
                     claude_cmd,
                     validated_dirs,
                     profile_name=task.task_id,
                     needs_git=bool(task.needs_git),
                 )
-                return sandboxed_cmd, mcp_config_path
+                return sandboxed_cmd, mcp_config_path, sandbox_profile_path
             except ValueError as e:
                 self.logger.error(f"Sandbox validation failed: {e}")
                 raise
 
-        return claude_cmd, mcp_config_path
+        return claude_cmd, mcp_config_path, sandbox_profile_path
 
     def _parse_output(self, stdout: str, stderr: str) -> Dict[str, Any]:
         """
@@ -909,7 +919,8 @@ class AgentManager:
         command: str,
         env: Dict[str, str],
         working_dir: str,
-        mcp_config_path: Optional[str]
+        mcp_config_path: Optional[str],
+        sandbox_profile_path: Optional[str]
     ):
         """
         Save complete state needed for task resumption
@@ -921,6 +932,7 @@ class AgentManager:
             env: Environment variables
             working_dir: Working directory path
             mcp_config_path: Path to MCP config file (if any)
+            sandbox_profile_path: Path to sandbox profile file (if any)
         """
         try:
             # Save task specification
@@ -961,11 +973,16 @@ class AgentManager:
                 self.logger.debug(f"Saved MCP config to scratch: {mcp_copy_path}")
 
             # Copy sandbox profile to scratch if sandboxing is enabled
-            if self.sandbox:
-                # Find the most recent sandbox profile (they're in /tmp with unique names)
-                # For now, we'll save the sandbox configuration details
+            if sandbox_profile_path and os.path.exists(sandbox_profile_path):
+                # Copy the actual .sb profile file
+                sandbox_profile_copy = scratch_dir / ".nightshift_sandbox.sb"
+                shutil.copy2(sandbox_profile_path, sandbox_profile_copy)
+                self.logger.debug(f"Saved sandbox profile to scratch: {sandbox_profile_copy}")
+
+                # Also save sandbox configuration metadata
                 sandbox_config = {
                     'enabled': True,
+                    'profile_path': str(sandbox_profile_copy),
                     'allowed_directories': task.allowed_directories or [],
                     'needs_git': task.needs_git or False,
                     'version': '1.0'

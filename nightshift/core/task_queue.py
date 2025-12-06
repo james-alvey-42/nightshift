@@ -37,6 +37,7 @@ class Task:
     timeout_seconds: Optional[int] = None  # Execution timeout (default: 900 = 15 mins)
     use_scratch: Optional[bool] = None  # Use isolated scratch directory (default: True)
     working_directory: Optional[str] = None  # Explicit working directory (overrides scratch if set)
+    scratch_directory: Optional[str] = None  # Actual scratch directory path (set during execution)
     scratch_git_repos: Optional[List[Dict[str, str]]] = None  # Git repos to clone into scratch
     scratch_copy_paths: Optional[List[Dict[str, str]]] = None  # Paths to copy into scratch
     created_at: Optional[str] = None
@@ -118,6 +119,7 @@ class TaskQueue:
                     timeout_seconds INTEGER DEFAULT 900,  -- Execution timeout (default: 15 mins)
                     use_scratch INTEGER DEFAULT 1,  -- Boolean: use isolated scratch directory (default: True)
                     working_directory TEXT,  -- Explicit working directory
+                    scratch_directory TEXT,  -- Actual scratch directory path (set during execution)
                     scratch_git_repos TEXT,  -- JSON array of git repos to clone
                     scratch_copy_paths TEXT,  -- JSON array of paths to copy
                     created_at TEXT NOT NULL,
@@ -165,6 +167,10 @@ class TaskQueue:
 
             if 'scratch_copy_paths' not in columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN scratch_copy_paths TEXT")
+                conn.commit()
+
+            if 'scratch_directory' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN scratch_directory TEXT")
                 conn.commit()
 
             # Note: SQLite doesn't support DROP COLUMN easily, so we leave estimated_time if it exists
@@ -224,9 +230,9 @@ class TaskQueue:
                 INSERT INTO tasks (
                     task_id, description, status, skill_name, allowed_tools,
                     allowed_directories, needs_git, system_prompt, timeout_seconds,
-                    use_scratch, working_directory, scratch_git_repos, scratch_copy_paths,
+                    use_scratch, working_directory, scratch_directory, scratch_git_repos, scratch_copy_paths,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
                 task.description,
@@ -239,6 +245,7 @@ class TaskQueue:
                 task.timeout_seconds,
                 1 if task.use_scratch else 0,
                 task.working_directory,
+                task.scratch_directory,
                 json.dumps(task.scratch_git_repos) if task.scratch_git_repos else None,
                 json.dumps(task.scratch_copy_paths) if task.scratch_copy_paths else None,
                 task.created_at,
@@ -271,6 +278,7 @@ class TaskQueue:
             # Handle new scratch directory fields with backwards compatibility
             use_scratch = bool(row["use_scratch"]) if "use_scratch" in row.keys() and row["use_scratch"] is not None else True
             working_directory = row["working_directory"] if "working_directory" in row.keys() else None
+            scratch_directory = row["scratch_directory"] if "scratch_directory" in row.keys() else None
             scratch_git_repos = json.loads(row["scratch_git_repos"]) if "scratch_git_repos" in row.keys() and row["scratch_git_repos"] else None
             scratch_copy_paths = json.loads(row["scratch_copy_paths"]) if "scratch_copy_paths" in row.keys() and row["scratch_copy_paths"] else None
 
@@ -286,6 +294,7 @@ class TaskQueue:
                 timeout_seconds=timeout_val,
                 use_scratch=use_scratch,
                 working_directory=working_directory,
+                scratch_directory=scratch_directory,
                 scratch_git_repos=scratch_git_repos,
                 scratch_copy_paths=scratch_copy_paths,
                 created_at=row["created_at"],
@@ -326,6 +335,7 @@ class TaskQueue:
                 # Handle new scratch directory fields with backwards compatibility
                 use_scratch = bool(row["use_scratch"]) if "use_scratch" in row.keys() and row["use_scratch"] is not None else True
                 working_directory = row["working_directory"] if "working_directory" in row.keys() else None
+                scratch_directory = row["scratch_directory"] if "scratch_directory" in row.keys() else None
                 scratch_git_repos = json.loads(row["scratch_git_repos"]) if "scratch_git_repos" in row.keys() and row["scratch_git_repos"] else None
                 scratch_copy_paths = json.loads(row["scratch_copy_paths"]) if "scratch_copy_paths" in row.keys() and row["scratch_copy_paths"] else None
 
@@ -341,6 +351,7 @@ class TaskQueue:
                     timeout_seconds=timeout_val,
                     use_scratch=use_scratch,
                     working_directory=working_directory,
+                    scratch_directory=scratch_directory,
                     scratch_git_repos=scratch_git_repos,
                     scratch_copy_paths=scratch_copy_paths,
                     created_at=row["created_at"],
@@ -387,7 +398,7 @@ class TaskQueue:
 
         # Add any additional fields from kwargs
         for key, value in kwargs.items():
-            if key in ["result_path", "error_message", "token_usage", "execution_time", "process_id"]:
+            if key in ["result_path", "error_message", "token_usage", "execution_time", "process_id", "scratch_directory"]:
                 update_fields.append(f"{key} = ?")
                 values.append(value)
 

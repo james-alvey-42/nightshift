@@ -156,16 +156,10 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
         state.detail_scroll_offset = 999999
         get_app().invalidate()
 
-    # Open current content in pager
+    # Open scratch directory in terminal/finder
     @kb.add('o', filter=is_normal_mode)
     def _(event):
-        """Open current tab content in $PAGER"""
-        controller.open_in_pager()
-
-    # Open scratch directory in terminal/finder
-    @kb.add('O', filter=is_normal_mode)
-    def _(event):
-        """Open scratch directory in file explorer or terminal"""
+        """Open scratch directory in file explorer"""
         def open_scratch():
             try:
                 task = state.selected_task
@@ -174,18 +168,31 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
                     logger.debug("TUI: Open scratch - no task selected")
                     return
 
-                use_scratch = task.details.get('use_scratch', True)
-                if not use_scratch:
-                    state.message = "Task not using scratch directory"
-                    logger.debug(f"TUI: Task {task.details.get('task_id')} not using scratch")
-                    return
+                # Get scratch directory from task (if it was set during execution)
+                scratch_directory = task.details.get('scratch_directory')
 
-                task_id = task.details.get('task_id')
-                scratch_path = Path.home() / ".nightshift" / "worktrees" / task_id
+                if scratch_directory:
+                    scratch_path = Path(scratch_directory)
+                else:
+                    # Fallback: check if task uses scratch and build default path
+                    use_scratch = task.details.get('use_scratch', True)
+                    if not use_scratch:
+                        # Try working directory instead
+                        working_dir = task.details.get('working_directory')
+                        if working_dir:
+                            scratch_path = Path(working_dir)
+                        else:
+                            state.message = "No scratch or working directory configured"
+                            logger.debug(f"TUI: Task {task.details.get('task_id')} has no directory to open")
+                            return
+                    else:
+                        # Build scratch path from task_id (might not exist yet)
+                        task_id = task.details.get('task_id')
+                        scratch_path = Path.home() / ".nightshift" / "worktrees" / task_id
 
                 if not scratch_path.exists():
-                    state.message = f"Scratch directory doesn't exist: {scratch_path}"
-                    logger.warning(f"TUI: Scratch directory not found: {scratch_path}")
+                    state.message = f"Directory doesn't exist yet: {scratch_path}"
+                    logger.warning(f"TUI: Directory not found: {scratch_path}")
                     return
 
                 # Try to open in file explorer or terminal
@@ -196,23 +203,29 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
                     # Open in Finder
                     subprocess.run(["open", str(scratch_path)], check=False)
                     state.message = f"Opened in Finder: {scratch_path.name}"
-                    logger.info(f"TUI: Opened scratch in Finder: {scratch_path}")
+                    logger.info(f"TUI: Opened in Finder: {scratch_path}")
                 elif system == "Linux":
                     # Try to open in default file manager
                     subprocess.run(["xdg-open", str(scratch_path)], check=False)
                     state.message = f"Opened: {scratch_path.name}"
-                    logger.info(f"TUI: Opened scratch: {scratch_path}")
+                    logger.info(f"TUI: Opened directory: {scratch_path}")
                 else:
-                    # Fallback: open terminal in that directory
-                    state.message = f"Scratch: {scratch_path}"
-                    logger.info(f"TUI: Scratch path: {scratch_path}")
+                    # Fallback: show path
+                    state.message = f"Path: {scratch_path}"
+                    logger.info(f"TUI: Directory path: {scratch_path}")
             except Exception as e:
-                state.message = f"Error opening scratch dir: {e}"
-                logger.error(f"TUI: Failed to open scratch directory: {e}")
+                state.message = f"Error opening directory: {e}"
+                logger.error(f"TUI: Failed to open directory: {e}")
 
             get_app().invalidate()
 
         run_in_terminal(open_scratch)
+
+    # Open current content in pager
+    @kb.add('O', filter=is_normal_mode)
+    def _(event):
+        """Open current tab content in $PAGER"""
+        controller.open_in_pager()
 
     # Quit
     @kb.add('q', filter=is_normal_mode)

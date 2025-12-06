@@ -96,8 +96,11 @@ Your job is to analyze a user's task description and determine:
 USER TASK:
 {description}
 
-CURRENT WORKING DIRECTORY:
-{Path.cwd()}
+EXECUTION CONTEXT:
+- User invoked command from: {Path.cwd()}
+- Default execution mode: Isolated scratch directory (use_scratch=true)
+- If scratch mode is enabled, task runs in a temporary workspace with only specified resources
+- If scratch mode is disabled, task runs directly in working_directory (defaults to user's current directory)
 
 AVAILABLE TOOLS:
 {self.tools_reference}
@@ -119,10 +122,12 @@ Respond with ONLY a JSON object (no other text) with this structure:
 }}
 
 Field explanations:
-- use_scratch: true (default) to use isolated scratch directory, false to run in specified working_directory
-- working_directory: If use_scratch=false, the absolute path to run in. If null, uses current directory.
-- scratch_git_repos: Only used if use_scratch=true. Git repos to clone into scratch.
-- scratch_copy_paths: Only used if use_scratch=true. Files/directories to copy into scratch.
+- use_scratch: true (default) - task runs in isolated scratch directory with specified resources
+- use_scratch: false - task runs directly in working_directory (less isolation, simpler setup)
+- working_directory: If use_scratch=false, the absolute path to run in. If null, uses {Path.cwd()}
+- scratch_git_repos: Only used if use_scratch=true. Git repos to clone into scratch workspace.
+- scratch_copy_paths: Only used if use_scratch=true. Files/directories to copy into scratch workspace.
+- allowed_directories: Additional directories to allow writes to (outside scratch, for both modes)
 
 Guidelines:
 - Be specific about which tools are needed
@@ -138,22 +143,24 @@ Guidelines:
 - When in doubt, if task mentions "gh", "GitHub", or git commands → set needs_git=true
 
 **SECURITY - Directory Sandboxing (CRITICAL):**
-- The executor will run in a macOS sandbox that BLOCKS all filesystem writes except to allowed_directories
-- Be DEFENSIVE: Only grant write access to the MINIMUM directories needed
-- Use ABSOLUTE PATHS only (resolve relative paths from current working directory shown above)
+- The executor runs in a macOS sandbox that BLOCKS all filesystem writes except to:
+  * The scratch directory (if use_scratch=true) - automatically allowed
+  * The allowed_directories you specify - for writes outside the scratch/working directory
+- Be DEFENSIVE: Only grant write access to MINIMUM additional directories needed
+- Use ABSOLUTE PATHS only (resolve relative paths from user's directory: {Path.cwd()})
 - Common patterns:
-  * If task mentions "current directory" or no specific location → ["{Path.cwd()}"]
-  * If task specifies a project path → use that exact path
-  * If task needs output files → only allow the output directory
-  * If task modifies multiple repos → list all needed directories separately
+  * Scratch mode (default): Task works in isolated scratch, allowed_directories for external outputs
+  * Direct mode (use_scratch=false): allowed_directories should include working_directory
+  * If task specifies a project path → use that exact path in allowed_directories
   * NEVER allow "/" or home directory unless explicitly required
-- Default to current directory if uncertain, but explain in reasoning
 - The sandbox automatically allows /tmp for temporary files (no need to specify)
 
 **SYSTEM PROMPT - Working Directory (CRITICAL):**
-- The system_prompt MUST instruct the executor to work within allowed_directories, NOT /tmp
-- Include this directive: "IMPORTANT: Do all work in the specified allowed paths. Do NOT use /tmp for task outputs unless specifically required for temporary intermediate files."
-- The executor should save all final outputs to the explicitly specified allowed paths
+- If use_scratch=true: Task runs in an isolated scratch workspace. System prompt should reference "the working directory" generically
+- If use_scratch=false: Task runs in working_directory. System prompt can reference specific path if needed
+- NEVER hardcode /tmp as the working directory in system_prompt
+- Generic phrasing: "Save all outputs to the working directory" or "Work within the allowed directories"
+- Specific phrasing only when use_scratch=false and user specified exact location
 
 **SYSTEM PROMPT - Git Commit Attribution (CRITICAL):**
 - When creating git commits, ALWAYS end the commit message with:
@@ -162,15 +169,17 @@ Guidelines:
 - NEVER use "Claude" or "Claude Code" in commit attribution - use "NightShift" instead
 
 **SCRATCH DIRECTORY - Resource Requirements (CRITICAL):**
-- Analyze what resources the task needs access to (git repos, files, directories)
+- When use_scratch=true: Analyze what resources the task needs (git repos, files, directories)
 - Specify which git repositories need to be cloned into the scratch workspace
-- Specify which files or directories need to be copied
-- The task will execute in an isolated scratch directory with ONLY the resources you specify
-- Examples:
+- Specify which files or directories need to be copied into the scratch workspace
+- The task executes in an isolated scratch directory with ONLY the resources you specify
+- Examples (assuming user directory is {Path.cwd()}):
   * Task modifying current git repo → scratch_git_repos: [{{"source": "{Path.cwd()}"}}]
   * Task analyzing a specific file → scratch_copy_paths: [{{"source": "/path/to/file.txt"}}]
   * Task working across multiple repos → list all repos in scratch_git_repos
-- If uncertain, default to copying the current working directory if it's a git repo
+  * Task needs external output location → use allowed_directories for the output path
+- If uncertain, default to copying the user's current directory if it's a git repo
+- When use_scratch=false: Leave scratch_git_repos and scratch_copy_paths empty
 """
 
         # Generate empty MCP config for planner (planner doesn't need MCP tools)
@@ -372,8 +381,11 @@ Estimated Tokens: {current_plan.get('estimated_tokens', 0)}
 USER FEEDBACK:
 {feedback}
 
-CURRENT WORKING DIRECTORY:
-{Path.cwd()}
+EXECUTION CONTEXT:
+- User invoked command from: {Path.cwd()}
+- Default execution mode: Isolated scratch directory (use_scratch=true)
+- If scratch mode is enabled, task runs in a temporary workspace with only specified resources
+- If scratch mode is disabled, task runs directly in working_directory (defaults to user's current directory)
 
 AVAILABLE TOOLS:
 {self.tools_reference}
@@ -402,8 +414,8 @@ Guidelines:
 - Update token estimates based on scope changes
 - Explain what changed in the reasoning field
 - **NEEDS_GIT**: Set needs_git=true for git operations OR 'gh' CLI usage (GitHub issues, PRs, etc.)
-- **SECURITY**: Only allow write access to minimum required directories (use absolute paths)
-- **SYSTEM PROMPT**: Instruct executor to work in allowed_directories, NOT /tmp. Include: "IMPORTANT: Do all work in the specified allowed directories. Do NOT use /tmp for task outputs unless specifically required for temporary intermediate files."
+- **SECURITY**: Only allow write access to minimum required additional directories (use absolute paths, resolve from {Path.cwd()})
+- **SYSTEM PROMPT**: Use generic phrasing like "the working directory" for scratch mode. NEVER hardcode /tmp as the working directory.
 - **GIT COMMITS**: For git commits, end with "🌙 Generated by NightShift (https://github.com/james-alvey-42/nightshift)" and use relevant emoji prefix (🐛 bugs, ✨ features, etc.). NEVER use "Claude"
 """
 

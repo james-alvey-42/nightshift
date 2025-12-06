@@ -167,20 +167,26 @@ class DetailControl(FormattedTextControl):
 
             if use_scratch:
                 lines.append(("", f"\n🗂️  Scratch Directory:\n"))
-                lines.append(("cyan", f"  Enabled (isolated execution)\n"))
+
+                # Show scratch directory path if available (task is running/completed)
+                scratch_directory = st.details.get('scratch_directory')
+                if scratch_directory:
+                    # Show just the directory name, not the full path
+                    from pathlib import Path
+                    scratch_name = Path(scratch_directory).name
+                    lines.append(("cyan", f"  {scratch_name}/\n"))
+                    lines.append(("class:dim", f"  Press 'o' to open in Finder\n"))
+                else:
+                    lines.append(("cyan", f"  Enabled (will be created during execution)\n"))
+
                 if scratch_git_repos:
-                    lines.append(("", f"  Git repos cloned:\n"))
+                    lines.append(("", f"  Git repos to clone:\n"))
                     for repo in scratch_git_repos:
                         lines.append(("class:dim", f"    • {repo.get('source', 'N/A')}\n"))
                 if scratch_copy_paths:
-                    lines.append(("", f"  Files/dirs copied:\n"))
+                    lines.append(("", f"  Files/dirs to copy:\n"))
                     for path in scratch_copy_paths:
                         lines.append(("class:dim", f"    • {path.get('source', 'N/A')}\n"))
-                # Show scratch directory path if task is running/completed
-                if st.details.get('status') in ['RUNNING', 'COMPLETED', 'FAILED']:
-                    scratch_path = f"~/.nightshift/worktrees/{st.task_id}/"
-                    lines.append(("", f"  Location: "))
-                    lines.append(("class:dim", f"{scratch_path}\n"))
             elif working_directory:
                 lines.append(("", f"\n📁 Working Directory:\n"))
                 lines.append(("yellow", f"  {working_directory}\n"))
@@ -424,7 +430,7 @@ class StatusBarControl(FormattedTextControl):
         """Generate formatted text for status bar with scroll indicators"""
         mode = "COMMAND" if self.state.command_active else "NORMAL"
         msg = self.state.busy_label or self.state.message or ""
-        hints = "j/k:nav h/l:tabs a:approve r:review c:cancel d:delete s:submit ^d/^u:scroll o:pager q:quit"
+        hints = "j/k:nav h/l:tabs a:approve r:review c:cancel d:delete s:submit ^d/^u:scroll o:open O:pager q:quit"
 
         # Get scroll info from state (set by DetailControl during render)
         scroll_info = ""
