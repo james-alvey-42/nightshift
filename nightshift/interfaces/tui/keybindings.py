@@ -161,6 +161,51 @@ def create_keybindings(state: UIState, controller, cmd_widget, detail_window=Non
         """Open current tab content in $PAGER"""
         controller.open_in_pager()
 
+    # Open scratch directory in terminal/finder
+    @kb.add('O', filter=is_normal_mode)
+    def _(event):
+        """Open scratch directory in file explorer or terminal"""
+        def open_scratch():
+            task = state.selected_task
+            if not task.details:
+                state.message = "No task selected"
+                return
+
+            use_scratch = task.details.get('use_scratch', True)
+            if not use_scratch:
+                state.message = "Task not using scratch directory"
+                return
+
+            task_id = task.details.get('task_id')
+            scratch_path = Path.home() / ".nightshift" / "worktrees" / task_id
+
+            if not scratch_path.exists():
+                state.message = f"Scratch directory doesn't exist: {scratch_path}"
+                return
+
+            # Try to open in file explorer or terminal
+            import platform
+            system = platform.system()
+
+            try:
+                if system == "Darwin":  # macOS
+                    # Open in Finder
+                    subprocess.run(["open", str(scratch_path)], check=False)
+                    state.message = f"Opened in Finder: {scratch_path.name}"
+                elif system == "Linux":
+                    # Try to open in default file manager
+                    subprocess.run(["xdg-open", str(scratch_path)], check=False)
+                    state.message = f"Opened: {scratch_path.name}"
+                else:
+                    # Fallback: open terminal in that directory
+                    state.message = f"Scratch: {scratch_path}"
+            except Exception as e:
+                state.message = f"Error opening scratch dir: {e}"
+
+            get_app().invalidate()
+
+        run_in_terminal(open_scratch)
+
     # Quit
     @kb.add('q', filter=is_normal_mode)
     def _(event):
