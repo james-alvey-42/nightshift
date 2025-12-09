@@ -129,6 +129,10 @@ class TaskQueue:
             cursor.execute("PRAGMA table_info(tasks)")
             columns = [row[1] for row in cursor.fetchall()]
 
+            if 'allowed_directories' not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN allowed_directories TEXT")
+                conn.commit()
+
             if 'needs_git' not in columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN needs_git INTEGER")
                 conn.commit()
